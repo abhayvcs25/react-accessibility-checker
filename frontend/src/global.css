@@ -1,0 +1,32 @@
+@import './tokens.css';
+
+:root {
+  color-scheme: light;
+  font-family: var(--design-font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--design-color-ink);
+  background: var(--design-color-background);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--design-color-background);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: #dfdcff;
+}

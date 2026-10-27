@@ -1,0 +1,32 @@
+:root {
+  --design-color-background: #f6f3e8;
+  --design-color-surface: #fffef9;
+  --design-color-surface-subtle: #eeeadd;
+  --design-color-ink: #191a16;
+  --design-color-muted: #4c4e44;
+  --design-color-accent: #c6f23a;
+  --design-color-accent-hover: #b4df2d;
+  --design-color-border: #191a16;
+  --design-color-focus: #5146d8;
+  --design-color-error: #8d1c24;
+  --design-color-error-background: #f7e5df;
+  --design-color-success: #315a25;
+
+  --design-font-sans:
+    Inter, "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
+  --design-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --design-space-1: 0.25rem;
+  --design-space-2: 0.5rem;
+  --design-space-3: 0.75rem;
+  --design-space-4: 1rem;
+  --design-space-6: 1.5rem;
+  --design-space-8: 2rem;
+  --design-space-12: 3rem;
+  --design-space-16: 4rem;
+
+  --design-border-width: 2px;
+  --design-shadow-hard: 3px 3px 0 rgb(25 26 22 / 20%);
+  --design-radius: 0;
+  --design-content-width: 72rem;
+}
