@@ -1,0 +1,19 @@
+# "latest" resolves rule metadata and engine resources from the configured remote rule server.
+ruleArchive: latest
+
+policies:
+  - IBM_Accessibility
+
+reportLevels:
+  - violation
+  - potentialviolation
+  - recommendation
+  - potentialrecommendation
+  - manual
+
+# Results are returned in memory by getCompliance; do not write report files.
+outputFormat:
+  - disable
+
+# Avoid sending scan timing metrics to IBM when the checker is closed.
+perfMetrics: false
