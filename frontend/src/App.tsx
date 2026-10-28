@@ -8,13 +8,120 @@ type HtmlFileInfo = {
   title: string | null
 }
 
+type AnalyzeIssue = {
+  ruleId: string
+  level: string
+  message: string
+  path: string
+  snippet: string
+  help?: string
+}
+
+type AnalyzeSummary = {
+  total: number
+  violations: number
+  potentialViolations: number
+  recommendations: number
+  potentialRecommendations: number
+  manual: number
+}
+
+type AnalyzeResponse = {
+  filename: string
+  analyzedAt: string
+  summary: AnalyzeSummary
+  issues: AnalyzeIssue[]
+}
+
 type SelectionState =
   | { status: 'empty' }
   | { status: 'reading'; name: string }
-  | { status: 'selected'; info: HtmlFileInfo }
+  | { status: 'selected'; info: HtmlFileInfo; content: string }
   | { status: 'error'; message: string }
 
 const EMPTY_STATE: SelectionState = { status: 'empty' }
+
+const SUMMARY_ITEMS: { label: string; key: keyof AnalyzeSummary }[] = [
+  { label: 'Total findings', key: 'total' },
+  { label: 'Confirmed violations', key: 'violations' },
+  { label: 'Potential violations', key: 'potentialViolations' },
+  { label: 'Recommendations', key: 'recommendations' },
+  { label: 'Potential recommendations', key: 'potentialRecommendations' },
+  { label: 'Manual review', key: 'manual' },
+]
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isAnalyzeIssue(value: unknown): value is AnalyzeIssue {
+  return (
+    isRecord(value) &&
+    typeof value.ruleId === 'string' &&
+    typeof value.level === 'string' &&
+    typeof value.message === 'string' &&
+    typeof value.path === 'string' &&
+    typeof value.snippet === 'string' &&
+    (value.help === undefined || typeof value.help === 'string')
+  )
+}
+
+function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
+  if (!isRecord(value) || !isRecord(value.summary)) {
+    return false
+  }
+
+  const summary = value.summary
+  const summaryKeys: (keyof AnalyzeSummary)[] = [
+    'total',
+    'violations',
+    'potentialViolations',
+    'recommendations',
+    'potentialRecommendations',
+    'manual',
+  ]
+
+  return (
+    typeof value.filename === 'string' &&
+    typeof value.analyzedAt === 'string' &&
+    !Number.isNaN(Date.parse(value.analyzedAt)) &&
+    summaryKeys.every(
+      (key) =>
+        typeof summary[key] === 'number' &&
+        Number.isFinite(summary[key]),
+    ) &&
+    Array.isArray(value.issues) &&
+    value.issues.every(isAnalyzeIssue)
+  )
+}
+
+function getIssueCategory(level: string): string {
+  switch (level.toLowerCase()) {
+    case 'violation':
+      return 'Confirmed violation'
+    case 'potentialviolation':
+      return 'Potential violation'
+    case 'recommendation':
+      return 'Recommendation'
+    case 'potentialrecommendation':
+      return 'Potential recommendation'
+    case 'manual':
+      return 'Manual review'
+    default:
+      return level || 'Finding'
+  }
+}
+
+function getSafeHelpUrl(help: string): string | null {
+  try {
+    const url = new URL(help)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+      ? url.href
+      : null
+  } catch {
+    return null
+  }
+}
 
 function isHtmlFile(file: File): boolean {
   return /\.(html|htm)$/i.test(file.name)
@@ -47,7 +154,11 @@ function getDocumentTitle(content: string): string | null {
 
 function App() {
   const [selection, setSelection] = useState<SelectionState>(EMPTY_STATE)
+  const [report, setReport] = useState<AnalyzeResponse | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
   const readId = useRef(0)
+  const analysisInFlight = useRef(false)
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
@@ -58,6 +169,8 @@ function App() {
     }
 
     const currentReadId = ++readId.current
+    setReport(null)
+    setAnalysisError(null)
 
     if (!isHtmlFile(file)) {
       setSelection({
@@ -78,6 +191,7 @@ function App() {
 
       setSelection({
         status: 'selected',
+        content,
         info: {
           name: file.name,
           size: formatFileSize(file.size),
@@ -100,16 +214,83 @@ function App() {
   function clearSelection() {
     readId.current += 1
     setSelection(EMPTY_STATE)
+    setReport(null)
+    setAnalysisError(null)
+  }
+
+  async function handleAnalyze() {
+    if (selection.status !== 'selected' || analysisInFlight.current) {
+      return
+    }
+
+    const currentReadId = readId.current
+    analysisInFlight.current = true
+    setIsAnalyzing(true)
+    setAnalysisError(null)
+    setReport(null)
+
+    try {
+      const response = await fetch('http://localhost:3001/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html: selection.content,
+          filename: selection.info.name,
+        }),
+      })
+
+      let payload: unknown
+      try {
+        payload = await response.json()
+      } catch {
+        payload = undefined
+      }
+
+      if (currentReadId !== readId.current) {
+        return
+      }
+
+      if (!response.ok) {
+        const message =
+          isRecord(payload) && typeof payload.error === 'string'
+            ? payload.error
+            : `The analysis backend returned HTTP ${response.status}.`
+        setAnalysisError(message)
+        return
+      }
+
+      if (!isAnalyzeResponse(payload)) {
+        setAnalysisError(
+          'The analysis backend returned an invalid response. Please try again.',
+        )
+        return
+      }
+
+      setReport(payload)
+    } catch {
+      if (currentReadId === readId.current) {
+        setAnalysisError(
+          'Could not reach the analysis backend at localhost:3001. Make sure it is running, then try again.',
+        )
+      }
+    } finally {
+      analysisInFlight.current = false
+      setIsAnalyzing(false)
+    }
   }
 
   const announcement =
     selection.status === 'reading'
       ? `Reading ${selection.name} locally.`
       : selection.status === 'selected'
-        ? `${selection.info.name} is ready. No accessibility analysis has been run.`
+        ? isAnalyzing
+          ? 'An accessibility analysis request is in progress.'
+          : report
+            ? `Analysis complete for ${report.filename}. ${report.summary.total} findings reported.`
+            : `${selection.info.name} is ready for analysis.`
         : selection.status === 'error'
           ? selection.message
-          : ''
+          : analysisError ?? ''
 
   return (
     <main className="page-shell">
@@ -128,8 +309,9 @@ function App() {
           <p className="eyebrow">A clearer place to begin</p>
           <h1 id="page-title">Check an HTML file</h1>
           <p className="intro-copy">
-            Choose a file from your device to get started. It stays in your
-            browser; nothing is uploaded.
+            File selection and preview stay in your browser. When you choose to
+            analyze, the HTML contents are sent to the local analysis backend
+            at localhost:3001.
           </p>
         </div>
 
@@ -196,7 +378,7 @@ function App() {
 
           <p className="privacy-note">
             <span className="privacy-dot" aria-hidden="true" />
-            Your file is read locally and is never uploaded.
+            Read locally; HTML is sent to localhost:3001 only when you analyze.
           </p>
         </section>
 
@@ -238,9 +420,20 @@ function App() {
               </div>
             </dl>
             <p className="analysis-note">
-              This is basic file information only. Accessibility analysis has
-              not been run.
+              File details are read locally. Choose Analyze HTML to send its
+              contents to the local backend and run the accessibility check.
             </p>
+            <div className="analysis-actions">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={handleAnalyze}
+                disabled={isAnalyzing}
+                aria-busy={isAnalyzing}
+              >
+                {isAnalyzing ? 'Analyzing…' : 'Analyze HTML'}
+              </button>
+            </div>
           </section>
         )}
 
@@ -249,6 +442,113 @@ function App() {
             <span aria-hidden="true">!</span>
             {selection.message}
           </p>
+        )}
+
+        {isAnalyzing && (
+          <p className="loading-message" role="status" aria-live="polite">
+            <span className="loading-indicator" aria-hidden="true" />
+            Analyzing HTML with the accessibility checker…
+          </p>
+        )}
+
+        {analysisError && (
+          <p className="error-message" role="alert">
+            <span aria-hidden="true">!</span>
+            {analysisError}
+          </p>
+        )}
+
+        {report && (
+          <section className="analysis-report" aria-labelledby="report-title">
+            <div className="report-heading">
+              <div>
+                <p className="eyebrow">Analysis results</p>
+                <h2 id="report-title">Accessibility report</h2>
+              </div>
+              <p className="report-meta">
+                <strong>{report.filename}</strong>
+                <time dateTime={report.analyzedAt}>
+                  {new Intl.DateTimeFormat(undefined, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(report.analyzedAt))}
+                </time>
+              </p>
+            </div>
+
+            <dl className="summary-grid">
+              {SUMMARY_ITEMS.map(({ key, label }) => (
+                <div className="summary-item" key={key}>
+                  <dt>{label}</dt>
+                  <dd>{new Intl.NumberFormat().format(report.summary[key])}</dd>
+                </div>
+              ))}
+            </dl>
+
+            <div className="findings-heading">
+              <h3>Findings</h3>
+              <span>{report.issues.length}</span>
+            </div>
+            {report.issues.length === 0 ? (
+              <p className="empty-findings">No findings reported.</p>
+            ) : (
+              <ol className="finding-list">
+                {report.issues.map((issue, index) => {
+                  const helpUrl = issue.help
+                    ? getSafeHelpUrl(issue.help)
+                    : null
+
+                  return (
+                    <li
+                      className="finding-item"
+                      key={`${issue.ruleId}-${issue.path}-${index}`}
+                    >
+                      <div className="finding-topline">
+                        <span
+                          className="finding-category"
+                          data-level={issue.level.toLowerCase()}
+                        >
+                          {getIssueCategory(issue.level)}
+                        </span>
+                        <code className="finding-rule">{issue.ruleId}</code>
+                      </div>
+                      <p className="finding-message">{issue.message}</p>
+                      <dl className="finding-details">
+                        <div>
+                          <dt>DOM path</dt>
+                          <dd>
+                            <code>{issue.path || 'Not provided'}</code>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>HTML snippet</dt>
+                          <dd>
+                            <pre>
+                              <code>{issue.snippet || 'No snippet provided'}</code>
+                            </pre>
+                          </dd>
+                        </div>
+                      </dl>
+                      {helpUrl && (
+                        <a
+                          className="help-link"
+                          href={helpUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Learn more
+                          <span className="visually-hidden">
+                            {' '}
+                            about {issue.ruleId} (opens in a new tab)
+                          </span>
+                        </a>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </section>
         )}
 
         <p className="visually-hidden" role="status" aria-live="polite">
