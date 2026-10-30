@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import * as aChecker from 'accessibility-checker'
 import type { AnalyzeIssue, AnalyzeResponse } from '../types/checker.js'
+import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
+import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -115,6 +117,24 @@ export function analyzeHtml(
 
   return enqueue(async () => {
     await ensureConfiguration()
+
+    try {
+      const contextExtraction = extractHtmlContextResultV2(html)
+      const contextAdapter = adaptContextSnapshotV2(contextExtraction)
+      if (
+        contextExtraction.status === 'unavailable' ||
+        contextAdapter.status === 'unavailable' ||
+        contextAdapter.status === 'error'
+      ) {
+        console.error(
+          'Context extraction was unavailable; continuing IBM accessibility analysis.',
+        )
+      }
+    } catch {
+      console.error(
+        'Context extraction failed; continuing IBM accessibility analysis.',
+      )
+    }
 
     const label = `accessibility-analyzer-${randomUUID()}`
     const result = await aChecker.getCompliance(html, label)

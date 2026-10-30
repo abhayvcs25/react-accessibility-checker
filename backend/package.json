@@ -13,7 +13,8 @@
   "dependencies": {
     "accessibility-checker": "^4.0.0",
     "cors": "^2.8.5",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "parse5": "^8.0.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
