@@ -1,4 +1,9 @@
-import { parse, type DefaultTreeAdapterTypes } from 'parse5';
+import {
+  ErrorCodes,
+  parse,
+  type DefaultTreeAdapterTypes,
+  type ParserError,
+} from 'parse5';
 import type {
   AriaAttributes,
   AttributeObservation,
@@ -22,6 +27,7 @@ import type {
   SupportingEvidence,
 } from '../types/contextV2.js';
 import type {
+  AuthoredNameInput,
   ProjectContextCategory,
   ProjectContextDocument,
   ProjectContextRecord,
@@ -65,6 +71,7 @@ const INPUT_PLACEHOLDER_TYPES = new Set([
 ]);
 const CUSTOM_WIDGET_ROLES = new Set<CustomWidgetRole>([
   'button',
+  'link',
   'checkbox',
   'radio',
   'switch',
@@ -79,6 +86,7 @@ const ARIA_ATTRIBUTE_NAMES: ContextAriaAttribute[] = [
   'aria-label',
   'aria-labelledby',
   'aria-describedby',
+  'aria-errormessage',
   'aria-hidden',
   'aria-level',
   'aria-checked',
@@ -88,6 +96,7 @@ const ARIA_ATTRIBUTE_NAMES: ContextAriaAttribute[] = [
   'aria-disabled',
   'aria-required',
   'aria-invalid',
+  'aria-live',
   'aria-controls',
   'aria-owns',
   'aria-valuenow',
@@ -454,12 +463,12 @@ function hrefKind(value: string): 'fragment' | 'same-document' | 'external' {
   }
 }
 
-function headingLevel(element: HtmlElement): 1 | 2 | 3 | 4 | 5 | 6 | undefined {
+function headingLevel(element: HtmlElement): number | undefined {
   const native = /^h([1-6])$/.exec(element.tagName)?.[1];
   const raw = native ?? getAttribute(element, 'aria-level');
   const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 6
-    ? (parsed as 1 | 2 | 3 | 4 | 5 | 6)
+  return Number.isInteger(parsed) && parsed >= 1
+    ? parsed
     : undefined;
 }
 
@@ -507,6 +516,7 @@ function createTarget(
         attributes: {
           ...attrs,
           alt: attributeObservation(element, 'alt'),
+          src: attributeObservation(element, 'src'),
           ...(element.tagName === 'input'
             ? { inputType: attributeObservation(element, 'type') }
             : {}),
@@ -567,6 +577,9 @@ function createTarget(
           (inputType === 'checkbox' || inputType === 'radio')
             ? { checked: booleanOrUnavailable(element, 'checked') }
             : {}),
+          ...(getAttribute(element, 'autocomplete') !== undefined
+            ? { autoComplete: attributeObservation(element, 'autocomplete') }
+            : {}),
           ...(element.tagName === 'select'
             ? { selected: selectHasSelection(element) ? 'present' as const : 'absent' as const }
             : {}),
@@ -596,11 +609,72 @@ function createTarget(
         ...base,
         kind: 'custom-widget',
         basis: classification.basis,
-        attributes: attrs,
+        attributes: {
+          ...attrs,
+          ...(classification.basis.role === 'link'
+            ? { href: attributeObservation(element, 'href') }
+            : {}),
+        },
       };
     default:
       throw new Error(`Unsupported evaluation target classification: ${id}`);
   }
+}
+
+function markTargetAttributesUnavailable(target: EvaluationTarget): void {
+  const unavailable = () =>
+    ({ status: 'unavailable', reason: 'parser-normalized-duplicate' }) as const;
+  const attributes = target.attributes;
+  attributes.authoredId = unavailable();
+  attributes.role = unavailable();
+  attributes.title = unavailable();
+  attributes.tabIndex = unavailable();
+  attributes.hidden = 'unavailable';
+  attributes.inert = 'unavailable';
+  attributes.aria.truncated = false;
+  for (const name of ARIA_ATTRIBUTE_NAMES) {
+    Object.assign(attributes.aria.values, { [name]: unavailable() });
+  }
+  switch (target.kind) {
+    case 'image':
+      target.attributes.alt = unavailable();
+      target.attributes.src = unavailable();
+      if (target.attributes.inputType) target.attributes.inputType = unavailable();
+      break;
+    case 'link':
+      target.attributes.href = unavailable();
+      break;
+    case 'button':
+      target.attributes.disabled = 'unavailable';
+      if (target.attributes.inputType) target.attributes.inputType = unavailable();
+      if (target.attributes.value) target.attributes.value = unavailable();
+      break;
+    case 'form-control':
+      target.attributes.name = unavailable();
+      target.attributes.required = 'unavailable';
+      target.attributes.disabled = 'unavailable';
+      if (target.attributes.inputType) target.attributes.inputType = unavailable();
+      if (target.attributes.placeholder) {
+        target.attributes.placeholder = unavailable();
+      }
+      if (target.attributes.autoComplete) {
+        target.attributes.autoComplete = unavailable();
+      }
+      if (target.attributes.checked) target.attributes.checked = 'unavailable';
+      if (target.attributes.selected) target.attributes.selected = 'unavailable';
+      break;
+    case 'heading':
+    case 'custom-widget':
+    case 'other':
+      if (target.kind === 'custom-widget' && target.attributes.href) {
+        target.attributes.href = unavailable();
+      }
+      break;
+  }
+  target.completeness = {
+    status: 'partial',
+    truncations: ['parser-diagnostic'],
+  };
 }
 
 function sourceLocator(
@@ -683,6 +757,7 @@ const PROJECT_CONTEXT_ATTRIBUTES = [
   'role',
   'title',
   'alt',
+  'src',
   'href',
   'for',
   'form',
@@ -698,11 +773,26 @@ const PROJECT_CONTEXT_ATTRIBUTES = [
   'aria-label',
   'aria-labelledby',
   'aria-describedby',
+  'aria-errormessage',
   'aria-hidden',
+  'aria-level',
+  'aria-checked',
+  'aria-selected',
+  'aria-expanded',
+  'aria-pressed',
+  'aria-disabled',
   'aria-required',
   'aria-invalid',
+  'aria-controls',
+  'aria-owns',
+  'aria-valuenow',
+  'aria-valuemin',
+  'aria-valuemax',
+  'aria-valuetext',
+  'aria-orientation',
+  'aria-haspopup',
+  'aria-activedescendant',
   'aria-live',
-  'aria-errormessage',
   'aria-atomic',
   'aria-relevant',
   'aria-busy',
@@ -806,38 +896,82 @@ function createProjectDocument(
     const id = `c-${contextRecords.length + 1}`;
     contextIdByElement.set(element, id);
     const attributes: ProjectContextRecord['attributes'] = {};
+    const truncatedAttributes: string[] = [];
+    const duplicateAttributes = state.duplicateAttributeElements.has(element);
     for (const name of PROJECT_CONTEXT_ATTRIBUTES) {
       const value = getAttribute(element, name);
-      attributes[name] = projectEvidence(
-        value === undefined ? undefined : bounded(value).value,
-      );
+      if (duplicateAttributes) {
+        attributes[name] = {
+          status: 'unknown',
+          reason: 'A duplicate-attribute parser error affects this element.',
+        };
+      } else if (value !== undefined) {
+        const isBoolean = ['hidden', 'disabled', 'required'].includes(name);
+        const truncatedValue = !isBoolean && value.length > MAX_ATTRIBUTE_VALUE_LENGTH;
+        if (truncatedValue) truncatedAttributes.push(name);
+        attributes[name] = {
+          status: 'present',
+          value: isBoolean ? true : bounded(value).value,
+          ...(truncatedValue ? { truncated: true } : {}),
+        };
+      } else {
+        attributes[name] = { status: 'confirmed-absent' };
+      }
     }
-    const textEvidence: ProjectEvidence<BoundedText> = text.value
-      ? { status: 'present', value: text }
-      : { status: 'confirmed-absent' };
+    const textEvidence: ProjectEvidence<BoundedText> = isInEditableRegion(element)
+      ? {
+          status: 'not-captured',
+          reason: 'Editable-region text is intentionally excluded.',
+        }
+      : text.value
+        ? {
+            status: 'present',
+            value: text,
+            completeness: text.truncated ? 'partial' : 'complete',
+            truncated: text.truncated,
+          }
+        : { status: 'confirmed-absent' };
     const rawAuthoredId = getAttribute(element, 'id');
     const rawRole = getAttribute(element, 'role');
     const truncated =
       text.truncated ||
-      PROJECT_CONTEXT_ATTRIBUTES.some((name) => {
-        const value = getAttribute(element, name);
-        return value !== undefined && value.length > MAX_ATTRIBUTE_VALUE_LENGTH;
-      });
+      truncatedAttributes.length > 0;
     contextRecords.push({
       id,
       tagName: element.tagName,
       category,
       sourceLocator: sourceLocator(element, html),
-      authoredId: projectEvidence(
-        rawAuthoredId === undefined
-          ? undefined
-          : bounded(rawAuthoredId).value,
-      ),
-      role: projectEvidence(
-        rawRole === undefined ? undefined : bounded(rawRole).value,
-      ),
+      authoredId: duplicateAttributes
+        ? {
+            status: 'unknown',
+            reason: 'A duplicate-attribute parser error affects this element.',
+          }
+        : rawAuthoredId === undefined
+          ? { status: 'confirmed-absent' }
+          : {
+              status: 'present',
+              value: bounded(rawAuthoredId).value,
+              ...(rawAuthoredId.length > MAX_ATTRIBUTE_VALUE_LENGTH
+                ? { truncated: true }
+                : {}),
+            },
+      role: duplicateAttributes
+        ? {
+            status: 'unknown',
+            reason: 'A duplicate-attribute parser error affects this element.',
+          }
+        : rawRole === undefined
+          ? { status: 'confirmed-absent' }
+          : {
+              status: 'present',
+              value: bounded(rawRole).value,
+              ...(rawRole.length > MAX_ATTRIBUTE_VALUE_LENGTH
+                ? { truncated: true }
+                : {}),
+            },
       text: textEvidence,
       attributes,
+      truncatedAttributes,
       completeness: truncated ? 'partial' : 'complete',
     });
   }
@@ -885,9 +1019,86 @@ function createProjectDocument(
     }
   }
 
+  for (const element of elements) {
+    const ref = recordRefs.get(element);
+    if (!ref) continue;
+
+    if (element.tagName === 'figcaption') {
+      let figure = parentElement(element);
+      while (figure && figure.tagName !== 'figure') {
+        figure = parentElement(figure);
+      }
+      const figureRef = figure ? recordRefs.get(figure) : undefined;
+      if (figureRef) {
+        addRelationship(
+          'figure-caption',
+          figureRef,
+          { status: 'resolved', record: ref },
+          'html-structure',
+        );
+      }
+    }
+
+    if (element.tagName === 'caption') {
+      let table = parentElement(element);
+      while (table && table.tagName !== 'table') table = parentElement(table);
+      const tableRef = table ? recordRefs.get(table) : undefined;
+      if (tableRef) {
+        addRelationship(
+          'table-caption',
+          tableRef,
+          { status: 'resolved', record: ref },
+          'html-structure',
+        );
+      }
+    }
+  }
+
   for (const [element, target] of state.targetByElement) {
     const source = recordRefs.get(element);
     if (!source) continue;
+
+    if (target.kind === 'heading' && target.headingLevel !== undefined) {
+      const headingIndex = elements.indexOf(element);
+      for (let index = headingIndex + 1; index < elements.length; index += 1) {
+        const candidate = elements[index];
+        if (!candidate) continue;
+        const candidateTarget = state.targetByElement.get(candidate);
+        if (candidateTarget?.kind === 'heading') {
+          if (
+            candidateTarget.headingLevel === undefined ||
+            candidateTarget.headingLevel <= target.headingLevel
+          ) {
+            break;
+          }
+        }
+        const destination = recordRefs.get(candidate);
+        if (destination) {
+          addRelationship(
+            'heading-section-content',
+            source,
+            { status: 'resolved', record: destination },
+            'html-structure',
+          );
+        }
+      }
+    }
+
+    if (target.kind === 'form-control') {
+      let current = parentElement(element);
+      while (current && current.tagName !== 'fieldset') {
+        current = parentElement(current);
+      }
+      const groupRef = current ? recordRefs.get(current) : undefined;
+      if (groupRef) {
+        addRelationship(
+          'field-group',
+          groupRef,
+          { status: 'resolved', record: source },
+          'native-html',
+        );
+      }
+    }
 
     const parent = element.parentNode;
     if (parent && 'childNodes' in parent) {
@@ -904,8 +1115,8 @@ function createProjectDocument(
               { status: 'resolved', record: destination },
               'html-structure',
             );
-            break;
           }
+          break;
         }
       }
       for (let cursor = index + 1; cursor < siblings.length; cursor += 1) {
@@ -919,13 +1130,25 @@ function createProjectDocument(
               { status: 'resolved', record: destination },
               'html-structure',
             );
-            break;
           }
+          break;
         }
       }
     }
 
     if (target.kind === 'form-control') {
+      if (state.duplicateAttributeElements.size > 0) {
+        addRelationship(
+          'form-owner',
+          source,
+          {
+            status: 'unknown',
+            reason: 'A parser diagnostic may affect form owner attributes.',
+          },
+          'native-html',
+        );
+        continue;
+      }
       const explicitFormId = getAttribute(element, 'form');
       let forms: HtmlElement[] = [];
       if (explicitFormId !== undefined) {
@@ -980,7 +1203,8 @@ function createProjectDocument(
       relationship.direction !== 'target-to-associated-record' ||
       (relationship.kind !== 'native-label' &&
         relationship.kind !== 'aria-labelledby' &&
-        relationship.kind !== 'aria-describedby')
+        relationship.kind !== 'aria-describedby' &&
+        relationship.kind !== 'aria-errormessage')
     ) {
       continue;
     }
@@ -1012,6 +1236,11 @@ function createProjectDocument(
                 (record) => refForSnapshotRecord(record),
               ),
             }
+        : relationship.destination.status === 'unknown'
+          ? {
+              status: 'unknown' as const,
+              reason: 'The referenced ID is affected by parser uncertainty.',
+            }
         : {
             status: 'unresolved' as const,
             reason: relationship.destination.reason,
@@ -1025,9 +1254,19 @@ function createProjectDocument(
   }
 
   const links: ProjectLinkReference[] = snapshot.targets
-    .filter((target) => target.kind === 'link')
+    .filter(
+      (target) =>
+        target.kind === 'link' ||
+        (target.kind === 'custom-widget' &&
+          target.basis.role === 'link'),
+    )
     .map((target) => {
-      const href = target.attributes.href;
+      const href =
+        target.kind === 'link'
+          ? target.attributes.href
+          : target.kind === 'custom-widget'
+            ? target.attributes.href ?? { status: 'absent' as const }
+            : { status: 'absent' as const };
       const source: ProjectRecordRef = {
         documentId,
         recordType: 'target',
@@ -1045,6 +1284,11 @@ function createProjectDocument(
                 }
             : href.status === 'absent'
               ? { status: 'confirmed-absent' }
+              : href.status === 'unavailable'
+                ? {
+                    status: 'unknown',
+                    reason: 'A parser diagnostic makes the authored href unavailable.',
+                  }
               : {
                   status: 'omitted-incomplete',
                   reason: `The href attribute is ${href.status} in Phase 3 V2.`,
@@ -1052,6 +1296,24 @@ function createProjectDocument(
         destination: { status: 'unknown', reason: 'Not resolved yet.' },
       };
     });
+  const baseElement = elements.find(
+    (element) => element.tagName === 'base' && hasAttribute(element, 'href'),
+  );
+  const baseHref: ProjectContextDocument['baseHref'] =
+    baseElement && state.duplicateAttributeElements.has(baseElement)
+      ? {
+          status: 'unknown',
+          reason: 'A duplicate-attribute parser error affects the base URL.',
+        }
+      : baseElement
+        ? {
+            status: 'present',
+            value: bounded(getAttribute(baseElement, 'href') ?? '').value,
+            ...(bounded(getAttribute(baseElement, 'href') ?? '').truncated
+              ? { truncated: true }
+              : {}),
+          }
+        : { status: 'confirmed-absent' };
 
   const contextRecordById = new Map(
     contextRecords.map((record) => [record.id, record]),
@@ -1115,45 +1377,80 @@ function createProjectDocument(
                     : 'Editable-region text is intentionally excluded.',
               }
             : { status: 'confirmed-absent' };
-      const authoredNameInputs: ProjectTargetEvidence['authoredNameInputs'] extends ProjectEvidence<infer T>
-        ? T
-        : never = [];
+      const authoredNameInputs: AuthoredNameInput[] = [];
+      const nameInputUncertainties: string[] = [];
+      const parserAffected =
+        targetElement !== undefined &&
+        state.duplicateAttributeElements.has(targetElement);
       const ariaLabel = target.attributes.aria.values['aria-label'];
       if (ariaLabel?.status === 'present') {
         authoredNameInputs.push({
           source: 'aria-label',
           value: ariaLabel.value.value,
+          truncated: ariaLabel.value.truncated,
         });
       } else if (ariaLabel?.status === 'invalid') {
         authoredNameInputs.push({
           source: 'aria-label',
           value: ariaLabel.raw.value,
         });
+      } else if (ariaLabel?.status === 'unavailable') {
+        nameInputUncertainties.push('The aria-label value is unavailable.');
+      } else if (ariaLabel?.status === 'ambiguous') {
+        nameInputUncertainties.push('The aria-label value is ambiguous.');
       }
       const labelledBy = target.attributes.aria.values['aria-labelledby'];
       if (labelledBy?.status === 'present') {
-        const refs = snapshot.relationships
+        let labelledByAmbiguous = false;
+        const labelRelationships = snapshot.relationships
           .filter(
             (relationship) =>
               'direction' in relationship &&
               relationship.direction === 'target-to-associated-record' &&
-              relationship.source.id === target.id &&
-              relationship.kind === 'aria-labelledby' &&
-              relationship.destination.status === 'resolved',
+              relationship.source.id === target.id
           )
-          .flatMap((relationship) =>
-            'direction' in relationship &&
-            relationship.direction === 'target-to-associated-record' &&
-            relationship.destination.status === 'resolved'
-              ? [relationship.destination.record]
-              : [],
-          )
-          .map((record) => ({ documentId, ...record }));
+          .filter((relationship) => relationship.kind === 'aria-labelledby');
+        const refs = labelRelationships.flatMap((relationship) => {
+          if (relationship.destination.status === 'resolved') {
+            return [{ documentId, ...relationship.destination.record }];
+          }
+          if (relationship.destination.status === 'ambiguous') {
+            labelledByAmbiguous = true;
+            nameInputUncertainties.push(
+              'One or more aria-labelledby references are ambiguous.',
+            );
+            return relationship.destination.candidates.map((record) => ({
+              documentId,
+              ...record,
+            }));
+          }
+          nameInputUncertainties.push(
+            'One or more aria-labelledby references could not be resolved completely.',
+          );
+          return [];
+        });
         authoredNameInputs.push({
           source: 'aria-labelledby',
           value: labelledBy.value.value,
+          truncated: labelledBy.value.truncated,
           referencedRecords: refs,
+          ...(labelledByAmbiguous
+            ? { certainty: 'ambiguous' as const }
+            : {}),
         });
+      } else if (labelledBy?.status === 'invalid') {
+        authoredNameInputs.push({
+          source: 'aria-labelledby',
+          value: labelledBy.raw.value,
+        });
+      } else if (labelledBy?.status === 'unavailable') {
+        nameInputUncertainties.push(
+          'The aria-labelledby value is unavailable.',
+        );
+      } else if (labelledBy?.status === 'ambiguous') {
+        nameInputUncertainties.push(
+          'The aria-labelledby value is ambiguous.',
+        );
       }
 
       const labelRelations = snapshot.relationships.filter(
@@ -1175,17 +1472,33 @@ function createProjectDocument(
           'sourceResolution' in relationship &&
           relationship.sourceResolution?.status === 'ambiguous',
       );
-      if (labelRecords.length && !ambiguousLabelRelation) {
+      const ambiguousLabelCandidates = labelRelations.flatMap((relationship) =>
+        'sourceResolution' in relationship &&
+        relationship.sourceResolution?.status === 'ambiguous'
+          ? relationship.sourceResolution.candidates.map((record) => ({
+              documentId,
+              ...record,
+            }))
+          : [],
+      );
+      if (labelRecords.length) {
         authoredNameInputs.push({
           source: 'native-label',
           referencedRecords: labelRecords,
+          ...(ambiguousLabelRelation ? { certainty: 'ambiguous' as const } : {}),
         });
+      }
+      if (ambiguousLabelRelation) {
+        nameInputUncertainties.push(
+          'A native label may be associated with multiple controls because of duplicate IDs.',
+        );
       }
       const visibleText = target.text?.value;
       if (visibleText) {
         authoredNameInputs.push({
           source: 'text-content',
           value: visibleText,
+          truncated: target.text?.truncated ?? false,
         });
       }
       if (!target.text?.value && targetElement) {
@@ -1202,12 +1515,14 @@ function createProjectDocument(
         authoredNameInputs.push({
           source: 'alt',
           value: target.attributes.alt.value.value,
+          truncated: target.attributes.alt.value.truncated,
         });
       }
       if (target.attributes.title.status === 'present') {
         authoredNameInputs.push({
           source: 'title',
           value: target.attributes.title.value.value,
+          truncated: target.attributes.title.value.truncated,
         });
       }
       if (
@@ -1217,7 +1532,23 @@ function createProjectDocument(
         authoredNameInputs.push({
           source: 'value-attribute',
           value: target.attributes.value.value.value,
+          truncated: target.attributes.value.value.truncated,
         });
+      }
+      if (
+        target.kind === 'form-control' &&
+        target.attributes.placeholder?.status === 'present'
+      ) {
+        authoredNameInputs.push({
+          source: 'placeholder',
+          value: target.attributes.placeholder.value.value,
+          truncated: target.attributes.placeholder.value.truncated,
+        });
+      }
+      if (parserAffected) {
+        nameInputUncertainties.push(
+          'A duplicate-attribute parser error makes authored attributes uncertain.',
+        );
       }
 
       const contextRefs = relationships
@@ -1229,6 +1560,35 @@ function createProjectDocument(
             relationship.source.recordType === 'context',
         )
         .map((relationship) => relationship.source);
+      const contextAncestorIds = new Set(contextRefs.map((record) => record.id));
+      const headingRefs = relationships
+        .filter(
+          (relationship) =>
+            relationship.kind === 'heading-section-content' &&
+            relationship.destination.status === 'resolved' &&
+            relationship.destination.record.recordType === 'target' &&
+            relationship.destination.record.id === target.id &&
+            relationship.source.recordType === 'target',
+        )
+        .map((relationship) => relationship.source);
+      const associatedStructuralRefs = relationships
+        .filter(
+          (relationship) =>
+            relationship.source.recordType === 'context' &&
+            contextAncestorIds.has(relationship.source.id) &&
+            [
+              'figure-caption',
+              'table-caption',
+              'heading-section-content',
+            ].includes(relationship.kind) &&
+            relationship.destination.status === 'resolved' &&
+            relationship.destination.record.documentId === documentId,
+        )
+        .flatMap((relationship) =>
+          relationship.destination.status === 'resolved'
+            ? [relationship.destination.record]
+            : [],
+        );
       const adjacentRefs = relationships
         .filter(
           (relationship) =>
@@ -1247,17 +1607,32 @@ function createProjectDocument(
         );
       const surroundingRecords = [
         ...new Map(
-          [...contextRefs, ...adjacentRefs].map((record) => [record.id, record]),
+          [...contextRefs, ...adjacentRefs, ...headingRefs].map((record) => [
+            record.id,
+            record,
+          ]),
         ).values(),
       ];
+      for (const record of associatedStructuralRefs) {
+        if (!surroundingRecords.some((existing) => existing.id === record.id)) {
+          surroundingRecords.push(record);
+        }
+      }
       const associationIncomplete =
         omittedContextElements.size > 0 ||
-        snapshot.completeness.status === 'partial';
+        snapshot.completeness.status === 'partial' ||
+        state.duplicateAttributeElements.size > 0;
       const nativeLabels: ProjectTargetEvidence['nativeLabels'] =
-        ambiguousLabelRelation
+        parserAffected
           ? {
               status: 'unknown',
-              reason: 'Duplicate authored IDs make the label-to-control association ambiguous.',
+              reason: 'A parser diagnostic affects attributes on this target.',
+            }
+          : ambiguousLabelRelation
+          ? {
+              status: 'ambiguous',
+              reason: 'Duplicate authored IDs make the native-label association ambiguous.',
+              candidates: ambiguousLabelCandidates,
             }
           : labelRecords.length
           ? {
@@ -1283,7 +1658,12 @@ function createProjectDocument(
                 status: 'omitted-incomplete',
                 reason: 'Extraction limits may have omitted surrounding DOM context.',
               }
-            : contextRecords.some((record) => record.text.status === 'present')
+            : contextRecords.some((record) => record.text.status === 'present') ||
+                snapshot.targets.some(
+                  (other) =>
+                    other.id !== target.id && Boolean(other.text?.value),
+                ) ||
+                snapshot.evidence.some((record) => Boolean(record.text?.value))
               ? {
                   status: 'unknown',
                   reason: 'Text exists in the document but no reliable structural association to this target was established.',
@@ -1298,8 +1678,25 @@ function createProjectDocument(
             ? {
                 status: 'present',
                 value: authoredNameInputs,
-                completeness: associationIncomplete ? 'partial' : 'complete',
+                completeness:
+                  associationIncomplete || nameInputUncertainties.length
+                    ? 'partial'
+                    : 'complete',
+                ...(nameInputUncertainties.length
+                  ? { uncertainties: nameInputUncertainties }
+                  : {}),
               }
+            : ambiguousLabelRelation
+              ? {
+                  status: 'ambiguous',
+                  reason: 'Authored native-label text exists but its target association is ambiguous.',
+                  candidates: ambiguousLabelCandidates,
+                }
+            : parserAffected
+              ? {
+                  status: 'unknown',
+                  reason: 'A duplicate-attribute parser error prevents confirming authored naming inputs.',
+                }
             : associationIncomplete
               ? {
                   status: 'omitted-incomplete',
@@ -1326,8 +1723,48 @@ function createProjectDocument(
   const partialRecordIds = contextRecords
     .filter((record) => record.completeness === 'partial')
     .map((record) => record.id);
+  for (const record of [...snapshot.targets, ...snapshot.evidence]) {
+    if (
+      record.completeness.status === 'partial' &&
+      !partialRecordIds.includes(record.id)
+    ) {
+      partialRecordIds.push(record.id);
+    }
+  }
+  for (const element of state.duplicateAttributeElements) {
+    const ref = recordRefs.get(element);
+    if (ref && !partialRecordIds.includes(ref.id)) partialRecordIds.push(ref.id);
+  }
+  const parserDiagnostics = state.parserDiagnostics.map((error) => {
+    const affectsExtraction =
+      error.code !== ErrorCodes.missingDoctype &&
+      error.code !== ErrorCodes.nonConformingDoctype;
+    const affectedElements = affectsExtraction
+      ? elements.filter((element) => {
+          const location = element.sourceCodeLocation?.startTag;
+          return (
+            location != null &&
+            error.startOffset >= location.startOffset &&
+            error.startOffset <= location.endOffset
+          );
+        })
+      : [];
+    const affectedRecords = affectedElements.flatMap((element) => {
+      const ref = recordRefs.get(element);
+      return ref ? [ref] : [];
+    });
+    return {
+      code: error.code,
+      startOffset: error.startOffset,
+      endOffset: error.endOffset,
+      affectsExtraction,
+      affectedRecords,
+    };
+  });
   const contextCompletenessPartial =
-    omittedContextElements.size > 0 || partialRecordIds.length > 0;
+    omittedContextElements.size > 0 ||
+    partialRecordIds.length > 0 ||
+    snapshot.completeness.status === 'partial';
   const contextPartial =
     contextCompletenessPartial;
   return {
@@ -1338,6 +1775,11 @@ function createProjectDocument(
     targetEvidence,
     relationships,
     links,
+    baseHref,
+    ...(baseElement
+      ? { baseHrefSourceLocator: sourceLocator(baseElement, html) }
+      : {}),
+    parserDiagnostics,
     contextCompleteness: {
       status: contextCompletenessPartial ? 'partial' : 'complete',
       omittedRecordCount: omittedContextElements.size,
@@ -1421,6 +1863,8 @@ interface MutableState {
   truncations: ExtractionTruncation[];
   policyOmissions: Map<string, number>;
   omittedByCap: Set<HtmlElement>;
+  duplicateAttributeElements: Set<HtmlElement>;
+  parserDiagnostics: ParserError[];
   recordIdByElement: Map<HtmlElement, ContextRecordRef>;
   targetByElement: Map<HtmlElement, EvaluationTarget>;
   evidenceByElement: Map<HtmlElement, SupportingEvidence>;
@@ -1510,6 +1954,29 @@ function includeEvidence(
     sourceLocator: sourceLocator(element, html),
     completeness,
   };
+  if (state.duplicateAttributeElements.has(element)) {
+    const unavailable = () =>
+      ({ status: 'unavailable', reason: 'parser-normalized-duplicate' }) as const;
+    if (evidence.attributes) {
+      evidence.attributes.authoredId = unavailable();
+      evidence.attributes.role = unavailable();
+      evidence.attributes.aria = {
+        values: Object.fromEntries(
+          ARIA_ATTRIBUTE_NAMES.map((name) => [name, unavailable()]),
+        ) as AriaAttributes,
+        truncated: false,
+      };
+    }
+    evidence.completeness = {
+      status: 'partial',
+      truncations: ['parser-diagnostic'],
+    };
+    noteTruncation(state, {
+      scope: 'evidence',
+      limit: 'parser-diagnostic',
+      recordId: id,
+    });
+  }
   state.evidence.push(evidence);
   state.evidenceByElement.set(element, evidence);
   state.recordIdByElement.set(element, { recordType: 'evidence', id });
@@ -1538,7 +2005,11 @@ function includeEvidence(
 }
 
 function makeProvenance(
-  attribute: 'for' | 'aria-labelledby' | 'aria-describedby',
+  attribute:
+    | 'for'
+    | 'aria-labelledby'
+    | 'aria-describedby'
+    | 'aria-errormessage',
   value: string,
 ): RelationshipProvenance {
   return attribute === 'for'
@@ -1556,7 +2027,11 @@ function makeProvenance(
 
 function relationshipDestination(
   id: string,
-  attribute: 'for' | 'aria-labelledby' | 'aria-describedby',
+  attribute:
+    | 'for'
+    | 'aria-labelledby'
+    | 'aria-describedby'
+    | 'aria-errormessage',
   matches: HtmlElement[],
   state: MutableState,
   html: string,
@@ -1564,6 +2039,17 @@ function relationshipDestination(
   destination: RelationshipDestination;
   partial: boolean;
 } {
+  if (state.duplicateAttributeElements.size > 0) {
+    return {
+      destination: {
+        status: 'unknown',
+        authoredId: bounded(id),
+        attribute,
+        reason: 'parser-diagnostic',
+      },
+      partial: true,
+    };
+  }
   if (!matches.length) {
     return {
       destination: {
@@ -1575,7 +2061,6 @@ function relationshipDestination(
       partial: false,
     };
   }
-
   const candidates = matches.slice(0, MAX_ID_REFERENCE_TARGETS_PER_ID);
   const refs: ContextRecordRef[] = [];
   for (const candidate of candidates) {
@@ -1627,7 +2112,11 @@ function addTargetReferenceRelationships(
   state: MutableState,
   html: string,
 ): void {
-  for (const attribute of ['aria-labelledby', 'aria-describedby'] as const) {
+  for (const attribute of [
+    'aria-labelledby',
+    'aria-describedby',
+    'aria-errormessage',
+  ] as const) {
     const raw = getAttribute(element, attribute);
     if (raw === undefined) continue;
     const parsed = parseIdReferences(raw);
@@ -1709,9 +2198,16 @@ function addNativeLabelRelationships(
   state: MutableState,
   html: string,
 ): void {
-  const labels = elements.filter((element) => element.tagName === 'label');
+  const labels = elements.filter(
+    (element) =>
+      element.tagName === 'label' &&
+      !state.duplicateAttributeElements.has(element),
+  );
   for (const label of labels) {
     const forId = getAttribute(label, 'for');
+    if (forId !== undefined && state.duplicateAttributeElements.size > 0) {
+      continue;
+    }
     let associated: HtmlElement[] = [];
     if (forId !== undefined && forId) {
       associated = (allElementsById.get(forId) ?? []).filter(
@@ -1814,7 +2310,11 @@ function extractHtmlContextV2Internal(html: string): {
   elements: HtmlElement[];
   state: MutableState;
 } {
-  const parsedDocument = parse(html, { sourceCodeLocationInfo: true });
+  const parserDiagnostics: ParserError[] = [];
+  const parsedDocument = parse(html, {
+    sourceCodeLocationInfo: true,
+    onParseError: (error) => parserDiagnostics.push(error),
+  });
   const elements: HtmlElement[] = [];
   const pending: HtmlNode[] = [parsedDocument];
   while (pending.length) {
@@ -1829,8 +2329,25 @@ function extractHtmlContextV2Internal(html: string): {
     }
   }
 
+  const duplicateAttributeErrors = parserDiagnostics.filter(
+    (error) => error.code === ErrorCodes.duplicateAttribute,
+  );
+  const duplicateAttributeElements = new Set(
+    elements.filter((element) => {
+      const startTag = element.sourceCodeLocation?.startTag;
+      return (
+        startTag !== undefined &&
+        duplicateAttributeErrors.some(
+          (error) =>
+            error.startOffset >= startTag.startOffset &&
+            error.startOffset <= startTag.endOffset,
+        )
+      );
+    }),
+  );
   const allElementsById = new Map<string, HtmlElement[]>();
   for (const element of elements) {
+    if (duplicateAttributeElements.has(element)) continue;
     const id = getAttribute(element, 'id');
     if (id !== undefined) {
       const matches = allElementsById.get(id) ?? [];
@@ -1846,6 +2363,8 @@ function extractHtmlContextV2Internal(html: string): {
     truncations: [],
     policyOmissions: new Map(),
     omittedByCap: new Set(),
+    duplicateAttributeElements,
+    parserDiagnostics,
     recordIdByElement: new Map(),
     targetByElement: new Map(),
     evidenceByElement: new Map(),
@@ -1878,6 +2397,14 @@ function extractHtmlContextV2Internal(html: string): {
     const id = `t-${state.targets.length + 1}`;
     const locator = sourceLocator(element, html);
     const target = createTarget(element, id, classification, locator);
+    if (duplicateAttributeElements.has(element)) {
+      markTargetAttributesUnavailable(target);
+      noteTruncation(state, {
+        scope: 'target',
+        limit: 'parser-diagnostic',
+        recordId: id,
+      });
+    }
     state.targets.push(target);
     state.targetByElement.set(element, target);
     state.recordIdByElement.set(element, { recordType: 'target', id });
@@ -1887,6 +2414,7 @@ function extractHtmlContextV2Internal(html: string): {
       target.attributes.title,
       ...Object.values(target.attributes.aria.values),
       ...('alt' in target.attributes ? [target.attributes.alt] : []),
+      ...('src' in target.attributes ? [target.attributes.src] : []),
       ...('href' in target.attributes ? [target.attributes.href] : []),
       ...('inputType' in target.attributes && target.attributes.inputType
         ? [target.attributes.inputType]
@@ -1894,6 +2422,9 @@ function extractHtmlContextV2Internal(html: string): {
       ...('name' in target.attributes ? [target.attributes.name] : []),
       ...('placeholder' in target.attributes
         ? [target.attributes.placeholder]
+        : []),
+      ...('autoComplete' in target.attributes && target.attributes.autoComplete
+        ? [target.attributes.autoComplete]
         : []),
       ...('value' in target.attributes && target.attributes.value
         ? [target.attributes.value]
@@ -1906,6 +2437,9 @@ function extractHtmlContextV2Internal(html: string): {
     if (target.text?.truncated) targetTruncations.push('text-limit');
     if (target.attributes.aria.truncated) {
       targetTruncations.push('aria-attribute-limit');
+    }
+    if (state.duplicateAttributeElements.has(element)) {
+      targetTruncations.push('parser-diagnostic');
     }
     if (targetTruncations.length) {
       target.completeness = {
@@ -1921,6 +2455,8 @@ function extractHtmlContextV2Internal(html: string): {
             ? 'text-length'
             : truncation === 'aria-attribute-limit'
               ? 'aria-attribute-count'
+              : truncation === 'parser-diagnostic'
+                ? 'parser-diagnostic'
               : 'attribute-value-length';
         noteTruncation(state, {
           scope: 'target',
@@ -1932,6 +2468,7 @@ function extractHtmlContextV2Internal(html: string): {
   }
 
   for (const [element, target] of state.targetByElement) {
+    if (state.duplicateAttributeElements.has(element)) continue;
     addTargetReferenceRelationships(
       target,
       element,
@@ -1951,6 +2488,11 @@ function extractHtmlContextV2Internal(html: string): {
       'destination' in relationship &&
       relationship.destination.status === 'unresolved',
   ).length;
+  const unknownCount = state.relationships.filter(
+    (relationship) =>
+      'destination' in relationship &&
+      relationship.destination.status === 'unknown',
+  ).length;
   const ambiguousCount = state.relationships.filter(
     (relationship) =>
       ('destination' in relationship &&
@@ -1968,13 +2510,26 @@ function extractHtmlContextV2Internal(html: string): {
       count,
     }),
   );
+  for (const error of state.parserDiagnostics) {
+    if (
+      error.code === ErrorCodes.missingDoctype ||
+      error.code === ErrorCodes.nonConformingDoctype
+    ) {
+      continue;
+    }
+    noteTruncation(state, {
+      scope: 'snapshot',
+      limit: 'parser-diagnostic',
+      recordId: `${error.code}@${error.startOffset}`,
+    });
+  }
   const completeness: ContextCompleteness =
     state.truncations.length === 0
       ? {
           status: 'complete',
           truncations: [],
           policyOmissions,
-          relationshipResolution: { unresolvedCount, ambiguousCount },
+          relationshipResolution: { unresolvedCount, ambiguousCount, unknownCount },
         }
       : {
           status: 'partial',
@@ -1983,7 +2538,11 @@ function extractHtmlContextV2Internal(html: string): {
             ...ExtractionTruncation[],
           ],
           policyOmissions,
-          relationshipResolution: { unresolvedCount, ambiguousCount },
+          relationshipResolution: {
+            unresolvedCount,
+            ambiguousCount,
+            ...(unknownCount ? { unknownCount } : {}),
+          },
         };
 
   const snapshot: ContextSnapshot = {
@@ -1992,6 +2551,11 @@ function extractHtmlContextV2Internal(html: string): {
     targets: state.targets,
     evidence: state.evidence,
     relationships: state.relationships,
+    parserDiagnostics: parserDiagnostics.map((error) => ({
+      code: error.code,
+      startOffset: error.startOffset,
+      endOffset: error.endOffset,
+    })),
     completeness,
   };
   return { snapshot, elements, state };

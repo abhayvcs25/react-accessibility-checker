@@ -49,6 +49,25 @@ describe('deprecated extractHtmlContext compatibility projection', () => {
     expect(button?.attributes.aria['aria-labelledby']).toBe('label');
   });
 
+  it('preserves V1 first-labelable-target behavior for duplicate IDs', () => {
+    const snapshot = extractHtmlContext(
+      '<label for="duplicate">Primary label</label>' +
+        '<input id="duplicate"><input id="duplicate">',
+    );
+    const label = snapshot.elements.find(
+      (element) => element.tagName === 'label',
+    );
+    const inputs = snapshot.elements.filter(
+      (element) => element.tagName === 'input',
+    );
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]?.relationships.labelContextIds).toContain(label?.contextId);
+    expect(inputs[1]?.relationships.labelContextIds).not.toContain(
+      label?.contextId,
+    );
+  });
+
   it('excludes editable text and executable/style contents', () => {
     const snapshot = extractHtmlContext(
       '<div contenteditable="true"><span role="button">private editor text</span></div>' +

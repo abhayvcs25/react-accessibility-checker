@@ -32,6 +32,7 @@ export type ContextRecordRef =
 
 export type CustomWidgetRole =
   | 'button'
+  | 'link'
   | 'checkbox'
   | 'radio'
   | 'switch'
@@ -81,6 +82,7 @@ export type ContextAriaAttribute =
   | 'aria-label'
   | 'aria-labelledby'
   | 'aria-describedby'
+  | 'aria-errormessage'
   | 'aria-hidden'
   | 'aria-level'
   | 'aria-checked'
@@ -90,6 +92,7 @@ export type ContextAriaAttribute =
   | 'aria-disabled'
   | 'aria-required'
   | 'aria-invalid'
+  | 'aria-live'
   | 'aria-controls'
   | 'aria-owns'
   | 'aria-valuenow'
@@ -104,6 +107,7 @@ export interface AriaAttributes {
   'aria-label'?: AttributeObservation<BoundedString>;
   'aria-labelledby'?: AttributeObservation<BoundedString>;
   'aria-describedby'?: AttributeObservation<BoundedString>;
+  'aria-errormessage'?: AttributeObservation<BoundedString>;
   'aria-hidden'?: AttributeObservation<boolean>;
   'aria-level'?: AttributeObservation<number>;
   'aria-checked'?: AttributeObservation<boolean | 'mixed'>;
@@ -113,6 +117,7 @@ export interface AriaAttributes {
   'aria-disabled'?: AttributeObservation<boolean>;
   'aria-required'?: AttributeObservation<boolean>;
   'aria-invalid'?: AttributeObservation<boolean | 'grammar' | 'spelling'>;
+  'aria-live'?: AttributeObservation<BoundedString>;
   'aria-controls'?: AttributeObservation<BoundedString>;
   'aria-owns'?: AttributeObservation<BoundedString>;
   'aria-valuenow'?: AttributeObservation<number>;
@@ -143,6 +148,7 @@ export interface CommonTargetAttributes {
 
 export interface ImageTargetAttributes extends CommonTargetAttributes {
   alt: AttributeObservation<BoundedString>;
+  src: AttributeObservation<BoundedString>;
   inputType?: AttributeObservation<BoundedString>;
 }
 
@@ -161,6 +167,7 @@ export interface FormControlTargetAttributes extends CommonTargetAttributes {
   inputType?: AttributeObservation<BoundedString>;
   name: AttributeObservation<BoundedString>;
   placeholder?: AttributeObservation<BoundedString>;
+  autoComplete?: AttributeObservation<BoundedString>;
   required: BooleanAttributeState;
   disabled: BooleanAttributeState;
   checked?: BooleanAttributeState;
@@ -168,13 +175,16 @@ export interface FormControlTargetAttributes extends CommonTargetAttributes {
 }
 
 export interface HeadingTargetAttributes extends CommonTargetAttributes {}
-export interface CustomWidgetTargetAttributes extends CommonTargetAttributes {}
+export interface CustomWidgetTargetAttributes extends CommonTargetAttributes {
+  href?: AttributeObservation<BoundedString>;
+}
 export interface OtherTargetAttributes extends CommonTargetAttributes {}
 
 export type RecordTruncation =
   | 'text-limit'
   | 'attribute-value-limit'
-  | 'aria-attribute-limit';
+  | 'aria-attribute-limit'
+  | 'parser-diagnostic';
 
 export type RecordCompleteness =
   | { status: 'complete' }
@@ -215,7 +225,7 @@ export type EvaluationTarget =
   | (EvaluationTargetBase & {
       kind: 'heading';
       basis: { type: 'native-html' } | { type: 'aria-heading' };
-      headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+      headingLevel?: number;
       attributes: HeadingTargetAttributes;
     })
   | (EvaluationTargetBase & {
@@ -254,6 +264,7 @@ export type TargetEvidenceRelationshipKind =
   | 'native-label'
   | 'aria-labelledby'
   | 'aria-describedby'
+  | 'aria-errormessage'
   | 'structural-context';
 
 export type RelationshipDestination =
@@ -261,16 +272,34 @@ export type RelationshipDestination =
   | {
       status: 'unresolved';
       authoredId: BoundedString;
-      attribute: 'for' | 'aria-labelledby' | 'aria-describedby';
+      attribute:
+        | 'for'
+        | 'aria-labelledby'
+        | 'aria-describedby'
+        | 'aria-errormessage';
       reason: 'not-found' | 'excluded-by-policy' | 'truncated';
     }
   | {
       status: 'ambiguous';
       authoredId: BoundedString;
-      attribute: 'for' | 'aria-labelledby' | 'aria-describedby';
+      attribute:
+        | 'for'
+        | 'aria-labelledby'
+        | 'aria-describedby'
+        | 'aria-errormessage';
       candidates: ContextRecordRef[];
       totalCandidateCount: number;
       additionalCandidateCount: number;
+    }
+  | {
+      status: 'unknown';
+      authoredId: BoundedString;
+      attribute:
+        | 'for'
+        | 'aria-labelledby'
+        | 'aria-describedby'
+        | 'aria-errormessage';
+      reason: 'parser-diagnostic';
     };
 
 export type RelationshipProvenance =
@@ -281,7 +310,10 @@ export type RelationshipProvenance =
     }
   | {
       basis: 'aria-idref';
-      attribute: 'aria-labelledby' | 'aria-describedby';
+      attribute:
+        | 'aria-labelledby'
+        | 'aria-describedby'
+        | 'aria-errormessage';
       authoredReference: BoundedString;
     }
   | { basis: 'structural-html'; ruleId: string }
@@ -352,7 +384,8 @@ export type ExtractionLimit =
   | 'aria-attribute-count'
   | 'idref-character-count'
   | 'idref-token-count'
-  | 'duplicate-id-candidates';
+  | 'duplicate-id-candidates'
+  | 'parser-diagnostic';
 
 export interface ExtractionTruncation {
   scope: 'snapshot' | 'target' | 'evidence' | 'relationship';
@@ -373,6 +406,7 @@ export interface PolicyOmission {
 export interface RelationshipResolutionSummary {
   unresolvedCount: number;
   ambiguousCount: number;
+  unknownCount?: number;
 }
 
 export type ContextCompleteness =
@@ -396,6 +430,11 @@ export interface ContextSnapshot {
   targets: EvaluationTarget[];
   evidence: SupportingEvidence[];
   relationships: ContextRelationship[];
+  parserDiagnostics: Array<{
+    code: string;
+    startOffset: number;
+    endOffset: number;
+  }>;
   completeness: ContextCompleteness;
 }
 

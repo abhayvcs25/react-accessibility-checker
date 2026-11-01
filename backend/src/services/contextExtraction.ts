@@ -76,10 +76,11 @@ function legacyAttributes(
         attributes.inputType = target.attributes.inputType.value.value;
       }
     } else if (target.kind === 'link') {
-      attributes.hrefKind =
-        target.attributes.href.status === 'absent'
-          ? 'missing'
-          : target.attributes.hrefKind ?? 'same-document';
+      if (target.attributes.href.status === 'absent') {
+        attributes.hrefKind = 'missing';
+      } else if (target.attributes.href.status === 'present') {
+        attributes.hrefKind = target.attributes.hrefKind ?? 'same-document';
+      }
     } else if (target.kind === 'button') {
       if (target.attributes.inputType?.status === 'present') {
         attributes.inputType = target.attributes.inputType.value.value;
@@ -196,7 +197,26 @@ export function extractHtmlContext(html: string): ContextSnapshot {
     };
     if (sourceLocator?.kind === 'dom-path') element.domPath = sourceLocator.path;
     if (target?.kind === 'heading' && target.headingLevel !== undefined) {
-      element.headingLevel = target.headingLevel;
+      switch (target.headingLevel) {
+        case 1:
+          element.headingLevel = 1;
+          break;
+        case 2:
+          element.headingLevel = 2;
+          break;
+        case 3:
+          element.headingLevel = 3;
+          break;
+        case 4:
+          element.headingLevel = 4;
+          break;
+        case 5:
+          element.headingLevel = 5;
+          break;
+        case 6:
+          element.headingLevel = 6;
+          break;
+      }
     }
     if (ownText) {
       element.text = { ownText, truncated: entry.record.completeness.status === 'partial' };
@@ -207,6 +227,13 @@ export function extractHtmlContext(html: string): ContextSnapshot {
   const elementById = new Map(elements.map((element) => [element.contextId, element]));
   for (const relation of document.snapshot.relationships) {
     if ('direction' in relation && relation.direction === 'target-to-associated-record') {
+      if (
+        relation.kind === 'native-label' &&
+        relation.sourceResolution?.status === 'ambiguous' &&
+        relation.source.id !== relation.sourceResolution.candidates[0]?.id
+      ) {
+        continue;
+      }
       const sourceId = contextIdByKey.get(recordKey(relation.source));
       const targetId =
         relation.destination.status === 'resolved'

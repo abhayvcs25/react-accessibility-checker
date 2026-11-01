@@ -83,9 +83,12 @@ function isRecordCompleteness(value: unknown): boolean {
     Array.isArray(value.truncations) &&
     value.truncations.length > 0 &&
     value.truncations.every((truncation) =>
-      ['text-limit', 'attribute-value-limit', 'aria-attribute-limit'].includes(
-        String(truncation),
-      ),
+      [
+        'text-limit',
+        'attribute-value-limit',
+        'aria-attribute-limit',
+        'parser-diagnostic',
+      ].includes(String(truncation)),
     )
   );
 }
@@ -124,6 +127,9 @@ function isSnapshotCompleteness(value: unknown): value is ContextCompleteness {
     !Number.isInteger(value.relationshipResolution.ambiguousCount) ||
     (value.relationshipResolution.unresolvedCount as number) < 0 ||
     (value.relationshipResolution.ambiguousCount as number) < 0 ||
+    (value.relationshipResolution.unknownCount !== undefined &&
+      (!Number.isInteger(value.relationshipResolution.unknownCount) ||
+        (value.relationshipResolution.unknownCount as number) < 0)) ||
     !Array.isArray(value.policyOmissions) ||
     !value.policyOmissions.every(
       (omission) =>
@@ -161,6 +167,7 @@ function isSnapshotCompleteness(value: unknown): value is ContextCompleteness {
           'idref-character-count',
           'idref-token-count',
           'duplicate-id-candidates',
+          'parser-diagnostic',
         ].includes(String(truncation.limit)) &&
         (truncation.recordId === undefined ||
           typeof truncation.recordId === 'string') &&
@@ -175,6 +182,7 @@ const ARIA_ATTRIBUTE_NAMES: ContextAriaAttribute[] = [
   'aria-label',
   'aria-labelledby',
   'aria-describedby',
+  'aria-errormessage',
   'aria-hidden',
   'aria-level',
   'aria-checked',
@@ -184,6 +192,7 @@ const ARIA_ATTRIBUTE_NAMES: ContextAriaAttribute[] = [
   'aria-disabled',
   'aria-required',
   'aria-invalid',
+  'aria-live',
   'aria-controls',
   'aria-owns',
   'aria-valuenow',
@@ -319,8 +328,10 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
       (tagName === 'img' ||
         (tagName === 'input' && inputType?.toLowerCase() === 'image')) &&
       validStringAttribute('alt') &&
+      validStringAttribute('src') &&
       attributesHaveOnly(
         'alt',
+        'src',
         ...(tagName === 'input' ? ['inputType'] : []),
       ) &&
       (tagName === 'img' ? !('inputType' in attributes) : validStringAttribute('inputType'))
@@ -373,6 +384,7 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
         'checked',
         'selected',
         'placeholder',
+        'autoComplete',
       )
     ) {
       return false;
@@ -382,6 +394,8 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
       const type = inputType ?? 'text';
       return (
         validStringAttribute('inputType') &&
+        (!('autoComplete' in attributes) ||
+          validStringAttribute('autoComplete')) &&
         !['hidden', 'image', 'button', 'submit', 'reset'].includes(type) &&
         !('selected' in attributes) &&
         (type === 'checkbox' || type === 'radio'
@@ -397,6 +411,8 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
         !('inputType' in attributes) &&
         !('checked' in attributes) &&
         !('placeholder' in attributes) &&
+        (!('autoComplete' in attributes) ||
+          validStringAttribute('autoComplete')) &&
         validBooleanAttribute('selected')
       );
     }
@@ -405,6 +421,8 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
       !('inputType' in attributes) &&
       !('checked' in attributes) &&
       !('selected' in attributes) &&
+      (!('autoComplete' in attributes) ||
+        validStringAttribute('autoComplete')) &&
       validStringAttribute('placeholder')
     );
   }
@@ -428,9 +446,22 @@ function isValidTarget(value: unknown): value is EvaluationTarget {
     return (
       basis.type === 'aria-widget' &&
       hasOnlyKeys(basis, ['type', 'role']) &&
-      attributesHaveOnly() &&
+      attributesHaveOnly(...(basis.role === 'link' ? ['href'] : [])) &&
       typeof basis.role === 'string' &&
-      ['button', 'checkbox', 'radio', 'switch', 'slider', 'textbox', 'combobox', 'listbox', 'searchbox', 'spinbutton'].includes(basis.role) &&
+      [
+        'button',
+        'checkbox',
+        'radio',
+        'switch',
+        'slider',
+        'textbox',
+        'combobox',
+        'listbox',
+        'searchbox',
+        'spinbutton',
+        'link',
+      ].includes(basis.role) &&
+      (basis.role !== 'link' || validStringAttribute('href')) &&
       attributeStringValue(attributes.role)?.toLowerCase().split(/\s+/)[0] ===
         basis.role
     );
@@ -534,9 +565,13 @@ function isValidRelationship(
     );
   }
   if (
-    !['native-label', 'aria-labelledby', 'aria-describedby', 'structural-context'].includes(
-      String(value.kind),
-    ) ||
+    ![
+      'native-label',
+      'aria-labelledby',
+      'aria-describedby',
+      'aria-errormessage',
+      'structural-context',
+    ].includes(String(value.kind)) ||
     value.direction !== 'target-to-associated-record' ||
     !isRecord(value.source) ||
     value.source.recordType !== 'target' ||
@@ -569,16 +604,34 @@ function isValidRelationship(
         !['not-found', 'excluded-by-policy', 'truncated'].includes(
           String(value.destination.reason),
         ) ||
-        !['for', 'aria-labelledby', 'aria-describedby'].includes(
+        ![
+          'for',
+          'aria-labelledby',
+          'aria-describedby',
+          'aria-errormessage',
+        ].includes(
           String(value.destination.attribute),
         )
+      : value.destination.status === 'unknown'
+        ? !isBoundedString(value.destination.authoredId) ||
+          value.destination.reason !== 'parser-diagnostic' ||
+          ![
+            'for',
+            'aria-labelledby',
+            'aria-describedby',
+            'aria-errormessage',
+          ].includes(String(value.destination.attribute))
       : true
   ) {
     return false;
   }
   if (
     value.provenance.basis === 'aria-idref' &&
-    !['aria-labelledby', 'aria-describedby'].includes(
+    ![
+      'aria-labelledby',
+      'aria-describedby',
+      'aria-errormessage',
+    ].includes(
       String(value.provenance.attribute),
     )
   ) {
@@ -617,7 +670,8 @@ function isValidRelationship(
     }
   } else if (
     value.kind === 'aria-labelledby' ||
-    value.kind === 'aria-describedby'
+    value.kind === 'aria-describedby' ||
+    value.kind === 'aria-errormessage'
   ) {
     if (
       provenance.basis !== 'aria-idref' ||
@@ -789,6 +843,18 @@ function isValidSnapshot(value: unknown): value is ContextSnapshot {
     !Array.isArray(value.targets) ||
     !Array.isArray(value.evidence) ||
     !Array.isArray(value.relationships) ||
+    !Array.isArray(value.parserDiagnostics) ||
+    !value.parserDiagnostics.every(
+      (diagnostic) =>
+        isRecord(diagnostic) &&
+        typeof diagnostic.code === 'string' &&
+        diagnostic.code.length > 0 &&
+        Number.isSafeInteger(diagnostic.startOffset) &&
+        Number.isSafeInteger(diagnostic.endOffset) &&
+        (diagnostic.startOffset as number) >= 0 &&
+        (diagnostic.endOffset as number) >=
+          (diagnostic.startOffset as number),
+    ) ||
     value.targets.length + value.evidence.length > MAX_RECORDS ||
     !isSnapshotCompleteness(value.completeness)
   ) {
@@ -874,6 +940,7 @@ function isValidSnapshot(value: unknown): value is ContextSnapshot {
     targets,
     evidence,
     value.relationships,
+    value.parserDiagnostics,
   );
 }
 
@@ -883,6 +950,7 @@ function isCompletenessConsistent(
   targets: EvaluationTarget[],
   evidence: SupportingEvidence[],
   relationships: ContextRelationship[],
+  parserDiagnostics: ContextSnapshot['parserDiagnostics'],
 ): boolean {
   const truncations = completeness.truncations;
   const hasTruncation = (
@@ -907,6 +975,20 @@ function isCompletenessConsistent(
     if (truncationKeys.has(key)) return false;
     truncationKeys.add(key);
     if (truncation.scope === 'snapshot') {
+      if (truncation.limit === 'parser-diagnostic') {
+        if (
+          !truncation.recordId ||
+          truncation.omittedCount !== undefined ||
+          !parserDiagnostics.some(
+            (diagnostic) =>
+              `${diagnostic.code}@${diagnostic.startOffset}` ===
+              truncation.recordId,
+          )
+        ) {
+          return false;
+        }
+        continue;
+      }
       if (
         !['record-count', 'text-length', 'attribute-value-length'].includes(
           truncation.limit,
@@ -937,6 +1019,8 @@ function isCompletenessConsistent(
             ? 'attribute-value-limit'
             : truncation.limit === 'aria-attribute-count'
               ? 'aria-attribute-limit'
+              : truncation.limit === 'parser-diagnostic'
+                ? 'parser-diagnostic'
               : undefined;
       if (
         !truncation.recordId ||
@@ -949,6 +1033,7 @@ function isCompletenessConsistent(
           'text-length',
           'attribute-value-length',
           'aria-attribute-count',
+          'parser-diagnostic',
         ].includes(truncation.limit) ||
         truncation.omittedCount !== undefined
       ) {
@@ -963,6 +1048,8 @@ function isCompletenessConsistent(
             ? 'attribute-value-limit'
             : truncation.limit === 'aria-attribute-count'
               ? 'aria-attribute-limit'
+              : truncation.limit === 'parser-diagnostic'
+                ? 'parser-diagnostic'
               : undefined;
       if (
         !truncation.recordId ||
@@ -975,6 +1062,7 @@ function isCompletenessConsistent(
           'text-length',
           'attribute-value-length',
           'aria-attribute-count',
+          'parser-diagnostic',
         ].includes(truncation.limit) ||
         truncation.omittedCount !== undefined
       ) {
@@ -990,9 +1078,10 @@ function isCompletenessConsistent(
         return false;
       }
     } else {
-      const idrefMatch = /^([a-zA-Z0-9_-]+):(aria-labelledby|aria-describedby)$/.exec(
-        truncation.recordId ?? '',
-      );
+      const idrefMatch =
+        /^([a-zA-Z0-9_-]+):(aria-labelledby|aria-describedby|aria-errormessage)$/.exec(
+          truncation.recordId ?? '',
+        );
       if (
         !idrefMatch ||
         !targetIds.has(idrefMatch[1] ?? '') ||
@@ -1014,7 +1103,9 @@ function isCompletenessConsistent(
           ? 'text-length'
           : recordTruncation === 'attribute-value-limit'
             ? 'attribute-value-length'
-            : 'aria-attribute-count';
+            : recordTruncation === 'aria-attribute-limit'
+              ? 'aria-attribute-count'
+              : 'parser-diagnostic';
       if (!hasTruncation('target', limit, target.id)) return false;
     }
   }
@@ -1027,7 +1118,9 @@ function isCompletenessConsistent(
           ? 'text-length'
           : recordTruncation === 'attribute-value-limit'
             ? 'attribute-value-length'
-            : 'aria-attribute-count';
+            : recordTruncation === 'aria-attribute-limit'
+              ? 'aria-attribute-count'
+              : 'parser-diagnostic';
       if (!hasTruncation('evidence', limit, item.id)) return false;
     }
   }

@@ -5,13 +5,25 @@ import type {
 
 export type EvidenceAvailability =
   | 'present'
+  | 'ambiguous'
   | 'confirmed-absent'
   | 'not-captured'
   | 'omitted-incomplete'
   | 'unknown';
 
 export type ProjectEvidence<T> =
-  | { status: 'present'; value: T; completeness?: 'complete' | 'partial' }
+  | {
+      status: 'present';
+      value: T;
+      completeness?: 'complete' | 'partial';
+      truncated?: boolean;
+      uncertainties?: string[];
+    }
+  | {
+      status: 'ambiguous';
+      reason: string;
+      candidates?: ProjectRecordRef[];
+    }
   | { status: 'confirmed-absent' }
   | {
       status: 'not-captured' | 'omitted-incomplete' | 'unknown';
@@ -49,6 +61,7 @@ export interface ProjectContextRecord {
   role: ProjectEvidence<string>;
   text: ProjectEvidence<{ value: string; truncated: boolean }>;
   attributes: Record<string, ProjectEvidence<string | boolean>>;
+  truncatedAttributes: string[];
   completeness: 'complete' | 'partial';
 }
 
@@ -61,9 +74,12 @@ export interface AuthoredNameInput {
     | 'descendant-content'
     | 'alt'
     | 'title'
-    | 'value-attribute';
+    | 'value-attribute'
+    | 'placeholder';
   value?: string;
+  truncated?: boolean;
   referencedRecords?: ProjectRecordRef[];
+  certainty?: 'ambiguous';
 }
 
 export interface ProjectTargetEvidence {
@@ -84,7 +100,12 @@ export type ProjectRelationshipKind =
   | 'native-label'
   | 'aria-labelledby'
   | 'aria-describedby'
-  | 'form-owner';
+  | 'aria-errormessage'
+  | 'form-owner'
+  | 'field-group'
+  | 'figure-caption'
+  | 'table-caption'
+  | 'heading-section-content';
 
 export interface ProjectRelationship {
   id: string;
@@ -108,7 +129,13 @@ export interface ProjectLinkReference {
   source: ProjectRecordRef;
   href: ProjectEvidence<string>;
   destination:
-    | { status: 'resolved'; documentId: string; fragment?: string }
+    | {
+        status: 'resolved';
+        documentId: string;
+        filePath: string;
+        query?: string;
+        fragment?: string;
+      }
     | {
         status:
           | 'external'
@@ -134,6 +161,15 @@ export interface ProjectContextDocument {
   targetEvidence: ProjectTargetEvidence[];
   relationships: ProjectRelationship[];
   links: ProjectLinkReference[];
+  baseHref: ProjectEvidence<string>;
+  parserDiagnostics: Array<{
+    code: string;
+    startOffset: number;
+    endOffset: number;
+    affectsExtraction: boolean;
+    affectedRecords: ProjectRecordRef[];
+  }>;
+  baseHrefSourceLocator?: SourceLocator;
   contextCompleteness: {
     status: 'complete' | 'partial';
     omittedRecordCount: number;
@@ -150,8 +186,18 @@ export interface ProjectContextDocument {
 }
 
 export interface ProjectComparisonGroup {
-  basis: 'exact-authored-link-text' | 'same-supplied-destination';
+  basis:
+    | 'exact-authored-link-text'
+    | 'exact-authored-target-text'
+    | 'exact-context-text'
+    | 'same-supplied-destination';
   records: ProjectRecordRef[];
+  destination?: {
+    documentId: string;
+    filePath: string;
+    query?: string;
+    fragment?: string;
+  };
 }
 
 export interface ProjectContextSnapshot {
