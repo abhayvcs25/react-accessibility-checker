@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import * as aChecker from 'accessibility-checker'
 import type { AnalyzeIssue, AnalyzeResponse } from '../types/checker.js'
+import type { ContextAdapterResult } from '../types/contextV2.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
 import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
+import { assessAdaptedContext } from './contextualAssessment.js'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -118,9 +120,10 @@ export function analyzeHtml(
   return enqueue(async () => {
     await ensureConfiguration()
 
+    let contextAdapter: ContextAdapterResult | undefined
     try {
       const contextExtraction = extractHtmlContextResultV2(html)
-      const contextAdapter = adaptContextSnapshotV2(contextExtraction)
+      contextAdapter = adaptContextSnapshotV2(contextExtraction)
       if (
         contextExtraction.status === 'unavailable' ||
         contextAdapter.status === 'unavailable' ||
@@ -170,6 +173,7 @@ export function analyzeHtml(
       issues: report.results
         .filter((issue) => issue.value[1] !== 'PASS')
         .map(normalizeIssue),
+      contextualAssessments: assessAdaptedContext(contextAdapter),
     }
   })
 }

@@ -24,6 +24,13 @@ const responseBody = {
     manual: 0,
   },
   issues: [],
+  contextualAssessments: {
+    modelId: 'huggingworld/Qwen3.5-4B-ONNX',
+    modelRevision: '8e3760349b4480f1f1a0f2d2010e46c5863262f1',
+    inferenceStatus: 'not_invoked_no_targets',
+    modelLoaded: false,
+    assessments: [],
+  },
 };
 
 describe('POST /api/analyze', () => {

@@ -17,6 +17,33 @@ type AnalyzeIssue = {
   help?: string
 }
 
+type ContextualAssessment = {
+  ruleId: string
+  targetId: string
+  assessment: 'potential_issue' | 'no_issue_detected' | 'insufficient_context'
+  evidence: {
+    record: { recordType: 'target' | 'evidence'; id: string }
+    text?: string
+  }[]
+  explanation: string
+  confidence: number | null
+  uncertainty: string[]
+  source: 'evidence_gate' | 'qwen3.5-4b'
+}
+
+type ContextualAssessmentReport = {
+  modelId: string
+  modelRevision: string
+  inferenceStatus:
+    | 'not_invoked_insufficient_context'
+    | 'not_invoked_no_targets'
+    | 'unavailable'
+    | 'failed'
+  modelLoaded: boolean
+  assessments: ContextualAssessment[]
+  errorCode?: string
+}
+
 type AnalyzeSummary = {
   total: number
   violations: number
@@ -31,6 +58,7 @@ type AnalyzeResponse = {
   analyzedAt: string
   summary: AnalyzeSummary
   issues: AnalyzeIssue[]
+  contextualAssessments: ContextualAssessmentReport
 }
 
 type SelectionState =
@@ -66,6 +94,53 @@ function isAnalyzeIssue(value: unknown): value is AnalyzeIssue {
   )
 }
 
+function isContextualAssessment(value: unknown): value is ContextualAssessment {
+  return (
+    isRecord(value) &&
+    typeof value.ruleId === 'string' &&
+    typeof value.targetId === 'string' &&
+    ['potential_issue', 'no_issue_detected', 'insufficient_context'].includes(
+      String(value.assessment),
+    ) &&
+    Array.isArray(value.evidence) &&
+    value.evidence.every(
+      (item) =>
+        isRecord(item) &&
+        isRecord(item.record) &&
+        ['target', 'evidence'].includes(String(item.record.recordType)) &&
+        typeof item.record.id === 'string' &&
+        (item.text === undefined || typeof item.text === 'string'),
+    ) &&
+    typeof value.explanation === 'string' &&
+    (value.confidence === null ||
+      (typeof value.confidence === 'number' &&
+        Number.isFinite(value.confidence))) &&
+    Array.isArray(value.uncertainty) &&
+    value.uncertainty.every((item) => typeof item === 'string') &&
+    ['evidence_gate', 'qwen3.5-4b'].includes(String(value.source))
+  )
+}
+
+function isContextualAssessmentReport(
+  value: unknown,
+): value is ContextualAssessmentReport {
+  return (
+    isRecord(value) &&
+    typeof value.modelId === 'string' &&
+    typeof value.modelRevision === 'string' &&
+    [
+      'not_invoked_insufficient_context',
+      'not_invoked_no_targets',
+      'unavailable',
+      'failed',
+    ].includes(String(value.inferenceStatus)) &&
+    typeof value.modelLoaded === 'boolean' &&
+    Array.isArray(value.assessments) &&
+    value.assessments.every(isContextualAssessment) &&
+    (value.errorCode === undefined || typeof value.errorCode === 'string')
+  )
+}
+
 function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
   if (!isRecord(value) || !isRecord(value.summary)) {
     return false
@@ -91,8 +166,35 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
         Number.isFinite(summary[key]),
     ) &&
     Array.isArray(value.issues) &&
-    value.issues.every(isAnalyzeIssue)
+    value.issues.every(isAnalyzeIssue) &&
+    isContextualAssessmentReport(value.contextualAssessments)
   )
+}
+
+function getAssessmentLabel(assessment: ContextualAssessment['assessment']) {
+  switch (assessment) {
+    case 'potential_issue':
+      return 'Potential issue'
+    case 'no_issue_detected':
+      return 'No issue detected'
+    case 'insufficient_context':
+      return 'Insufficient context'
+  }
+}
+
+function getInferenceStatusMessage(
+  report: ContextualAssessmentReport,
+): string {
+  switch (report.inferenceStatus) {
+    case 'not_invoked_insufficient_context':
+      return 'The model was not invoked because the captured static context does not include required evidence.'
+    case 'not_invoked_no_targets':
+      return 'No targets matched the current contextual-assessment pilot checks.'
+    case 'unavailable':
+      return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
+    case 'failed':
+      return 'Local contextual inference failed. IBM findings remain unaffected.'
+  }
 }
 
 function getIssueCategory(level: string): string {
@@ -548,6 +650,104 @@ function App() {
                 })}
               </ol>
             )}
+
+            <section
+              className="contextual-report"
+              aria-labelledby="contextual-report-title"
+            >
+              <div className="findings-heading">
+                <h3 id="contextual-report-title">
+                  Contextual pilot assessments
+                </h3>
+                <span>{report.contextualAssessments.assessments.length}</span>
+              </div>
+              <p className="contextual-report-note">
+                Advisory contextual output is separate from IBM findings and
+                summary counts. Model: {report.contextualAssessments.modelId}
+                {' · '}Revision: {report.contextualAssessments.modelRevision}
+                {' · '}Loaded:{' '}
+                {report.contextualAssessments.modelLoaded ? 'yes' : 'no'}
+              </p>
+              <p className="contextual-status" role="status">
+                {getInferenceStatusMessage(report.contextualAssessments)}
+              </p>
+              {report.contextualAssessments.errorCode && (
+                <p className="contextual-error-code">
+                  Status code: {report.contextualAssessments.errorCode}
+                </p>
+              )}
+              {report.contextualAssessments.assessments.length > 0 && (
+                <ol className="contextual-assessment-list">
+                  {report.contextualAssessments.assessments.map(
+                    (assessment, index) => (
+                      <li
+                        className="contextual-assessment-item"
+                        key={`${assessment.ruleId}-${assessment.targetId}-${index}`}
+                      >
+                        <div className="finding-topline">
+                          <span className="contextual-assessment-status">
+                            {getAssessmentLabel(assessment.assessment)}
+                          </span>
+                          <span className="contextual-assessment-source">
+                            {assessment.source === 'evidence_gate'
+                              ? 'Model not invoked'
+                              : 'Qwen3.5-4B local model'}
+                          </span>
+                          <code className="finding-rule">
+                            {assessment.ruleId}
+                          </code>
+                        </div>
+                        <p className="finding-message">
+                          {assessment.explanation}
+                        </p>
+                        <dl className="finding-details">
+                          <div>
+                            <dt>Target</dt>
+                            <dd>
+                              <code>{assessment.targetId}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Supplied evidence</dt>
+                            <dd>
+                              {assessment.evidence.length === 0 ? (
+                                'No evidence records'
+                              ) : (
+                                <ul className="contextual-evidence-list">
+                                  {assessment.evidence.map((item) => (
+                                    <li
+                                      key={`${item.record.recordType}-${item.record.id}`}
+                                    >
+                                      <code>
+                                        {item.record.recordType}:
+                                        {item.record.id}
+                                      </code>
+                                      {item.text && <span> — {item.text}</span>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </dd>
+                          </div>
+                          {assessment.uncertainty.length > 0 && (
+                            <div>
+                              <dt>Missing or uncertain prerequisites</dt>
+                              <dd>
+                                <ul className="contextual-evidence-list">
+                                  {assessment.uncertainty.map((item) => (
+                                    <li key={item}>{item}</li>
+                                  ))}
+                                </ul>
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+                      </li>
+                    ),
+                  )}
+                </ol>
+              )}
+            </section>
           </section>
         )}
 

@@ -1,3 +1,5 @@
+import type { ContextRecordRef } from './contextV2.js';
+
 /**
  * Types for the IBM accessibility-checker report structure
  * and our normalized API request/response contracts.
@@ -145,6 +147,47 @@ export interface AnalyzeSummary {
   manual: number;
 }
 
+export type ContextualAssessmentRuleId =
+  | 'BUTTON-PURPOSE-CLARITY'
+  | 'FORM-LABEL-RELEVANCE'
+  | 'ARIA-NAME-CLARITY';
+
+export type ContextualAssessmentValue =
+  | 'potential_issue'
+  | 'no_issue_detected'
+  | 'insufficient_context';
+
+export interface ContextualAssessmentEvidence {
+  record: ContextRecordRef;
+  text?: string;
+}
+
+export interface ContextualAssessment {
+  ruleId: ContextualAssessmentRuleId;
+  targetId: string;
+  assessment: ContextualAssessmentValue;
+  evidence: ContextualAssessmentEvidence[];
+  explanation: string;
+  confidence: number | null;
+  uncertainty: string[];
+  source: 'evidence_gate' | 'qwen3.5-4b';
+}
+
+export type ContextualInferenceStatus =
+  | 'not_invoked_insufficient_context'
+  | 'not_invoked_no_targets'
+  | 'unavailable'
+  | 'failed';
+
+export interface ContextualAssessmentReport {
+  modelId: string;
+  modelRevision: string;
+  inferenceStatus: ContextualInferenceStatus;
+  modelLoaded: boolean;
+  assessments: ContextualAssessment[];
+  errorCode?: string;
+}
+
 /** The JSON response returned by POST /api/analyze on success. */
 export interface AnalyzeResponse {
   /** Echo of the scanned filename. */
@@ -155,6 +198,8 @@ export interface AnalyzeResponse {
   summary: AnalyzeSummary;
   /** Individual findings, excluding passes. */
   issues: AnalyzeIssue[];
+  /** Experimental contextual assessments, separate from IBM findings and counts. */
+  contextualAssessments: ContextualAssessmentReport;
 }
 
 /** Standard error response body. */

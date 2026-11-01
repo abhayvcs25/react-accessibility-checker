@@ -141,9 +141,15 @@ describe('analyzeHtml context extraction integration', () => {
           help: 'https://example.test/rule',
         },
       ],
+      contextualAssessments: {
+        inferenceStatus: 'not_invoked_no_targets',
+        modelLoaded: false,
+        assessments: [],
+      },
     });
     expect(Object.keys(response).sort()).toEqual([
       'analyzedAt',
+      'contextualAssessments',
       'filename',
       'issues',
       'summary',
@@ -161,6 +167,11 @@ describe('analyzeHtml context extraction integration', () => {
 
       expect(response.filename).toBe(filename);
       expect(response.issues[0]?.ruleId).toBe('WCAG20_Img_HasAlt');
+      expect(response.contextualAssessments).toMatchObject({
+        inferenceStatus: 'unavailable',
+        assessments: [],
+        errorCode: 'context-extraction-failed',
+      });
       expect(getCompliance).toHaveBeenCalledWith(
         html,
         expect.stringMatching(/^accessibility-analyzer-/),

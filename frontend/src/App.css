@@ -476,6 +476,86 @@
   font-weight: 700;
 }
 
+.contextual-report {
+  margin-top: var(--design-space-8);
+  padding-top: var(--design-space-6);
+  border-top: 2px solid var(--design-color-border);
+}
+
+.contextual-report-note,
+.contextual-status,
+.contextual-error-code {
+  color: var(--design-color-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.contextual-report-note {
+  margin: var(--design-space-3) 0;
+  overflow-wrap: anywhere;
+}
+
+.contextual-status {
+  margin: 0;
+  padding: var(--design-space-3) var(--design-space-4);
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface-subtle);
+  color: var(--design-color-ink);
+  font-weight: 650;
+}
+
+.contextual-error-code {
+  margin: var(--design-space-2) 0 0;
+  font-family: var(--design-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.contextual-assessment-list {
+  display: grid;
+  gap: var(--design-space-4);
+  margin: var(--design-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.contextual-assessment-item {
+  min-width: 0;
+  padding: var(--design-space-4);
+  border: var(--design-border-width) dashed var(--design-color-border);
+  background: var(--design-color-surface-subtle);
+}
+
+.contextual-assessment-status,
+.contextual-assessment-source {
+  padding: var(--design-space-1) var(--design-space-2);
+  border: 1px solid var(--design-color-border);
+  background: var(--design-color-surface);
+  color: var(--design-color-ink);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.contextual-assessment-source {
+  border-style: dashed;
+  background: var(--design-color-background);
+}
+
+.contextual-evidence-list {
+  display: grid;
+  gap: var(--design-space-2);
+  margin: 0;
+  padding-left: var(--design-space-4);
+  overflow-wrap: anywhere;
+}
+
+.contextual-evidence-list code {
+  color: var(--design-color-ink);
+  font-family: var(--design-font-mono);
+  font-size: 11px;
+}
+
 .finding-list {
   display: grid;
   gap: var(--design-space-4);
