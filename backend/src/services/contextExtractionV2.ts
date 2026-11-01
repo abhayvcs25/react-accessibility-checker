@@ -21,6 +21,16 @@ import type {
   SourceLocator,
   SupportingEvidence,
 } from '../types/contextV2.js';
+import type {
+  ProjectContextCategory,
+  ProjectContextDocument,
+  ProjectContextRecord,
+  ProjectEvidence,
+  ProjectLinkReference,
+  ProjectRecordRef,
+  ProjectRelationship,
+  ProjectTargetEvidence,
+} from '../types/contextProject.js';
 import { CONTEXT_SCHEMA_V2 } from '../types/contextV2.js';
 
 type HtmlNode = DefaultTreeAdapterTypes.Node;
@@ -176,6 +186,7 @@ function collectText(nodes: HtmlNode[], limit: number): BoundedText {
     const node = pending.pop();
     if (!node) continue;
     if (node.nodeName === '#text' && 'value' in node) {
+      if (isInsideEditableRegion(node)) continue;
       const segment = node.value.replace(/\s+/g, ' ').trim();
       if (!segment) continue;
       const separator = value ? ' ' : '';
@@ -188,7 +199,14 @@ function collectText(nodes: HtmlNode[], limit: number): BoundedText {
       value += separator + segment;
       continue;
     }
-    if (isElement(node) && SKIPPED_TEXT_TAGS.has(node.tagName)) continue;
+    if (
+      isElement(node) &&
+      (SKIPPED_TEXT_TAGS.has(node.tagName) ||
+        FORM_TAGS.has(node.tagName) ||
+        isInEditableRegion(node))
+    ) {
+      continue;
+    }
     if ('childNodes' in node) {
       for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
         const child = node.childNodes[index];
@@ -200,10 +218,35 @@ function collectText(nodes: HtmlNode[], limit: number): BoundedText {
 }
 
 function elementText(element: HtmlElement): BoundedText {
-  if (FORM_TAGS.has(element.tagName)) {
+  if (FORM_TAGS.has(element.tagName) || isInEditableRegion(element)) {
     return { value: '', truncated: false };
   }
   return collectText(element.childNodes, MAX_TEXT_LENGTH);
+}
+
+function isInEditableRegion(element: HtmlElement): boolean {
+  let current: HtmlElement | undefined = element;
+  while (current) {
+    if (hasAttribute(current, 'contenteditable')) {
+      const state = getAttribute(current, 'contenteditable')
+        ?.trim()
+        .toLowerCase();
+      if (state === 'false') return false;
+      if (state === '' || state === 'true' || state === 'plaintext-only') {
+        return true;
+      }
+    }
+    current = parentElement(current);
+  }
+  return false;
+}
+
+function isInsideEditableRegion(node: HtmlNode): boolean {
+  let current: HtmlNode | null = node;
+  while (current && !isElement(current)) {
+    current = 'parentNode' in current ? current.parentNode : null;
+  }
+  return current ? isInEditableRegion(current) : false;
 }
 
 function parentElement(element: HtmlElement): HtmlElement | undefined {
@@ -602,6 +645,713 @@ function sourceLocator(
         path: `/${pathParts.join('/')}`,
       }
     : undefined;
+}
+
+const PROJECT_CONTEXT_TAGS = new Map<string, ProjectContextCategory>([
+  ['p', 'text'],
+  ['blockquote', 'text'],
+  ['pre', 'text'],
+  ['label', 'label'],
+  ['legend', 'group'],
+  ['form', 'form'],
+  ['fieldset', 'group'],
+  ['section', 'section'],
+  ['article', 'section'],
+  ['main', 'landmark'],
+  ['nav', 'landmark'],
+  ['header', 'landmark'],
+  ['footer', 'landmark'],
+  ['aside', 'landmark'],
+  ['ul', 'list'],
+  ['ol', 'list'],
+  ['dl', 'list'],
+  ['li', 'list-item'],
+  ['dt', 'list-item'],
+  ['dd', 'list-item'],
+  ['table', 'table'],
+  ['caption', 'caption'],
+  ['th', 'table-cell'],
+  ['td', 'table-cell'],
+  ['figcaption', 'caption'],
+  ['figure', 'figure'],
+  ['summary', 'text'],
+  ['title', 'text'],
+]);
+
+const PROJECT_CONTEXT_ATTRIBUTES = [
+  'id',
+  'role',
+  'title',
+  'alt',
+  'href',
+  'for',
+  'form',
+  'type',
+  'name',
+  'placeholder',
+  'action',
+  'method',
+  'autocomplete',
+  'hidden',
+  'disabled',
+  'required',
+  'aria-label',
+  'aria-labelledby',
+  'aria-describedby',
+  'aria-hidden',
+  'aria-required',
+  'aria-invalid',
+  'aria-live',
+  'aria-errormessage',
+  'aria-atomic',
+  'aria-relevant',
+  'aria-busy',
+] as const;
+
+const MAX_PROJECT_CONTEXT_RECORDS = 500;
+
+function collectDirectText(nodes: HtmlNode[], limit: number): BoundedText {
+  let value = '';
+  let truncated = false;
+  for (const node of nodes) {
+    if (node.nodeName !== '#text' || !('value' in node)) continue;
+    const segment = node.value.replace(/\s+/g, ' ').trim();
+    if (!segment) continue;
+    const separator = value ? ' ' : '';
+    const remaining = limit - value.length - separator.length;
+    if (segment.length > remaining) {
+      value += separator + segment.slice(0, Math.max(remaining, 0));
+      truncated = true;
+      break;
+    }
+    value += separator + segment;
+  }
+  return { value, truncated };
+}
+
+function projectEvidence<T>(value: T | undefined): ProjectEvidence<T> {
+  return value === undefined
+    ? { status: 'confirmed-absent' }
+    : { status: 'present', value };
+}
+
+function projectContextCategory(
+  element: HtmlElement,
+  text: BoundedText,
+): ProjectContextCategory | undefined {
+  const nativeHeading = /^h[1-6]$/.test(element.tagName);
+  const ariaHeading =
+    getAttribute(element, 'role')?.trim().toLowerCase().split(/\s+/)[0] ===
+    'heading';
+  if (nativeHeading || ariaHeading) return 'heading';
+  const knownCategory = PROJECT_CONTEXT_TAGS.get(element.tagName);
+  if (knownCategory) return knownCategory;
+  return text.value ? 'text' : undefined;
+}
+
+function recordRefForElement(
+  element: HtmlElement,
+  state: MutableState,
+  contextIdByElement: Map<HtmlElement, string>,
+  documentId: string,
+): ProjectRecordRef | undefined {
+  const target = state.targetByElement.get(element);
+  if (target) {
+    return { documentId, recordType: 'target', id: target.id };
+  }
+  const evidence = state.evidenceByElement.get(element);
+  if (evidence) {
+    return { documentId, recordType: 'evidence', id: evidence.id };
+  }
+  const contextId = contextIdByElement.get(element);
+  return contextId
+    ? { documentId, recordType: 'context', id: contextId }
+    : undefined;
+}
+
+function createProjectDocument(
+  snapshot: ContextSnapshot,
+  elements: HtmlElement[],
+  state: MutableState,
+  html: string,
+  documentId: string,
+  filePath: string,
+): ProjectContextDocument {
+  const contextRecords: ProjectContextRecord[] = [];
+  const contextIdByElement = new Map<HtmlElement, string>();
+  const omittedContextElements = new Set<HtmlElement>();
+
+  for (const element of elements) {
+    if (
+      state.targetByElement.has(element) ||
+      state.evidenceByElement.has(element) ||
+      SKIPPED_TEXT_TAGS.has(element.tagName)
+    ) {
+      continue;
+    }
+
+    const knownCategory = PROJECT_CONTEXT_TAGS.get(element.tagName);
+    const text = isInEditableRegion(element)
+      ? { value: '', truncated: false }
+      : knownCategory
+        ? collectText(element.childNodes, MAX_TEXT_LENGTH)
+        : collectDirectText(element.childNodes, MAX_TEXT_LENGTH);
+    const category = projectContextCategory(element, text);
+    if (!category) continue;
+    if (contextRecords.length >= MAX_PROJECT_CONTEXT_RECORDS) {
+      omittedContextElements.add(element);
+      continue;
+    }
+
+    const id = `c-${contextRecords.length + 1}`;
+    contextIdByElement.set(element, id);
+    const attributes: ProjectContextRecord['attributes'] = {};
+    for (const name of PROJECT_CONTEXT_ATTRIBUTES) {
+      const value = getAttribute(element, name);
+      attributes[name] = projectEvidence(
+        value === undefined ? undefined : bounded(value).value,
+      );
+    }
+    const textEvidence: ProjectEvidence<BoundedText> = text.value
+      ? { status: 'present', value: text }
+      : { status: 'confirmed-absent' };
+    const rawAuthoredId = getAttribute(element, 'id');
+    const rawRole = getAttribute(element, 'role');
+    const truncated =
+      text.truncated ||
+      PROJECT_CONTEXT_ATTRIBUTES.some((name) => {
+        const value = getAttribute(element, name);
+        return value !== undefined && value.length > MAX_ATTRIBUTE_VALUE_LENGTH;
+      });
+    contextRecords.push({
+      id,
+      tagName: element.tagName,
+      category,
+      sourceLocator: sourceLocator(element, html),
+      authoredId: projectEvidence(
+        rawAuthoredId === undefined
+          ? undefined
+          : bounded(rawAuthoredId).value,
+      ),
+      role: projectEvidence(
+        rawRole === undefined ? undefined : bounded(rawRole).value,
+      ),
+      text: textEvidence,
+      attributes,
+      completeness: truncated ? 'partial' : 'complete',
+    });
+  }
+
+  const recordRefs = new Map<HtmlElement, ProjectRecordRef>();
+  for (const element of elements) {
+    const ref = recordRefForElement(
+      element,
+      state,
+      contextIdByElement,
+      documentId,
+    );
+    if (ref) recordRefs.set(element, ref);
+  }
+
+  const relationships: ProjectRelationship[] = [];
+  const addRelationship = (
+    kind: ProjectRelationship['kind'],
+    source: ProjectRecordRef,
+    destination: ProjectRelationship['destination'],
+    provenance: ProjectRelationship['provenance'],
+  ): void => {
+    relationships.push({
+      id: `pr-${relationships.length + 1}`,
+      kind,
+      source,
+      destination,
+      provenance,
+    });
+  };
+
+  for (const [element, childRef] of recordRefs) {
+    let ancestor = parentElement(element);
+    while (ancestor && !recordRefs.has(ancestor)) {
+      ancestor = parentElement(ancestor);
+    }
+    const parentRef = ancestor ? recordRefs.get(ancestor) : undefined;
+    if (parentRef) {
+      addRelationship(
+        'dom-parent-child',
+        parentRef,
+        { status: 'resolved', record: childRef },
+        'html-structure',
+      );
+    }
+  }
+
+  for (const [element, target] of state.targetByElement) {
+    const source = recordRefs.get(element);
+    if (!source) continue;
+
+    const parent = element.parentNode;
+    if (parent && 'childNodes' in parent) {
+      const siblings = parent.childNodes;
+      const index = siblings.indexOf(element);
+      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+        const sibling = siblings[cursor];
+        if (sibling && isElement(sibling)) {
+          const destination = recordRefs.get(sibling);
+          if (destination) {
+            addRelationship(
+              'adjacent-before',
+              source,
+              { status: 'resolved', record: destination },
+              'html-structure',
+            );
+            break;
+          }
+        }
+      }
+      for (let cursor = index + 1; cursor < siblings.length; cursor += 1) {
+        const sibling = siblings[cursor];
+        if (sibling && isElement(sibling)) {
+          const destination = recordRefs.get(sibling);
+          if (destination) {
+            addRelationship(
+              'adjacent-after',
+              source,
+              { status: 'resolved', record: destination },
+              'html-structure',
+            );
+            break;
+          }
+        }
+      }
+    }
+
+    if (target.kind === 'form-control') {
+      const explicitFormId = getAttribute(element, 'form');
+      let forms: HtmlElement[] = [];
+      if (explicitFormId !== undefined) {
+        forms = elements.filter(
+          (candidate) =>
+            candidate.tagName === 'form' &&
+            getAttribute(candidate, 'id') === explicitFormId,
+        );
+      } else {
+        let current = parentElement(element);
+        while (current && current.tagName !== 'form') {
+          current = parentElement(current);
+        }
+        if (current?.tagName === 'form') forms = [current];
+      }
+      const formRefs = forms
+        .map((form) => recordRefs.get(form))
+        .filter((ref): ref is ProjectRecordRef => ref !== undefined);
+      addRelationship(
+        'form-owner',
+        source,
+        formRefs.length === 1
+          ? { status: 'resolved', record: formRefs[0]! }
+          : formRefs.length > 1
+            ? {
+                status: 'ambiguous',
+                reason: 'The authored form ID matches multiple forms.',
+                candidates: formRefs,
+              }
+          : {
+              status: 'unresolved',
+              reason:
+                explicitFormId !== undefined
+                ? `No supplied form matches the authored form ID "${bounded(explicitFormId).value}".`
+                  : 'No ancestor form is present in the parsed document.',
+            },
+        'native-html',
+      );
+    }
+  }
+
+  const refForSnapshotRecord = (
+    record: ContextRecordRef,
+  ): ProjectRecordRef => ({
+    documentId,
+    recordType: record.recordType,
+    id: record.id,
+  });
+  for (const relationship of snapshot.relationships) {
+    if (
+      !('direction' in relationship) ||
+      relationship.direction !== 'target-to-associated-record' ||
+      (relationship.kind !== 'native-label' &&
+        relationship.kind !== 'aria-labelledby' &&
+        relationship.kind !== 'aria-describedby')
+    ) {
+      continue;
+    }
+    const source = refForSnapshotRecord(relationship.source);
+    const kind =
+      relationship.kind === 'native-label'
+        ? 'native-label'
+        : relationship.kind;
+    const destination =
+      relationship.destination.status === 'resolved'
+        ? 'sourceResolution' in relationship &&
+          relationship.sourceResolution?.status === 'ambiguous'
+          ? {
+              status: 'ambiguous' as const,
+              reason: 'The label ID matches multiple labelable controls.',
+              candidates: relationship.sourceResolution.candidates.map(
+                (record) => ({ documentId, ...record }),
+              ),
+            }
+          : {
+              status: 'resolved' as const,
+              record: refForSnapshotRecord(relationship.destination.record),
+            }
+        : relationship.destination.status === 'ambiguous'
+          ? {
+              status: 'ambiguous' as const,
+              reason: `The authored reference matched ${relationship.destination.totalCandidateCount} records.`,
+              candidates: relationship.destination.candidates.map(
+                (record) => refForSnapshotRecord(record),
+              ),
+            }
+        : {
+            status: 'unresolved' as const,
+            reason: relationship.destination.reason,
+          };
+    addRelationship(
+      kind,
+      source,
+      destination,
+      relationship.kind === 'native-label' ? 'native-html' : 'aria-idref',
+    );
+  }
+
+  const links: ProjectLinkReference[] = snapshot.targets
+    .filter((target) => target.kind === 'link')
+    .map((target) => {
+      const href = target.attributes.href;
+      const source: ProjectRecordRef = {
+        documentId,
+        recordType: 'target',
+        id: target.id,
+      };
+      return {
+        source,
+        href:
+          href.status === 'present' && !href.value.truncated
+            ? projectEvidence(href.value.value)
+            : href.status === 'present'
+              ? {
+                  status: 'omitted-incomplete',
+                  reason: 'The authored href was truncated in Phase 3 V2.',
+                }
+            : href.status === 'absent'
+              ? { status: 'confirmed-absent' }
+              : {
+                  status: 'omitted-incomplete',
+                  reason: `The href attribute is ${href.status} in Phase 3 V2.`,
+                },
+        destination: { status: 'unknown', reason: 'Not resolved yet.' },
+      };
+    });
+
+  const contextRecordById = new Map(
+    contextRecords.map((record) => [record.id, record]),
+  );
+  const descendantNameRecords = new Map<HtmlElement, ProjectRecordRef[]>();
+  for (const element of elements) {
+    let ancestor = parentElement(element);
+    while (ancestor && !state.targetByElement.has(ancestor)) {
+      ancestor = parentElement(ancestor);
+    }
+    if (!ancestor) continue;
+    const ancestorTarget = state.targetByElement.get(ancestor);
+    if (!ancestorTarget || ancestorTarget.text?.value) continue;
+    const record = recordRefs.get(element);
+    if (!record) continue;
+
+    let hasNameContent = false;
+    if (record.recordType === 'target') {
+      const descendant = state.targetByElement.get(element);
+      hasNameContent = Boolean(
+        descendant?.text?.value ||
+          (descendant?.kind === 'image' &&
+            descendant.attributes.alt.status === 'present'),
+      );
+    } else if (record.recordType === 'evidence') {
+      hasNameContent = Boolean(state.evidenceByElement.get(element)?.text?.value);
+    } else {
+      hasNameContent =
+        contextRecordById.get(record.id)?.text.status === 'present';
+    }
+    if (!hasNameContent) continue;
+    const records = descendantNameRecords.get(ancestor) ?? [];
+    records.push(record);
+    descendantNameRecords.set(ancestor, records);
+  }
+
+  const targetEvidence: ProjectTargetEvidence[] = snapshot.targets.map(
+    (target) => {
+      const targetRef: ProjectRecordRef = {
+        documentId,
+        recordType: 'target',
+        id: target.id,
+      };
+      const targetElement = [...state.targetByElement.entries()].find(
+        ([, candidate]) => candidate.id === target.id,
+      )?.[0];
+      const targetDomText: ProjectTargetEvidence['targetDomText'] =
+        target.text?.value
+          ? {
+              status: 'present',
+              value: target.text,
+              completeness: target.text.truncated ? 'partial' : 'complete',
+            }
+          : target.kind === 'form-control' ||
+              (targetElement !== undefined && isInEditableRegion(targetElement))
+            ? {
+                status: 'not-captured',
+                reason:
+                  target.kind === 'form-control'
+                    ? 'Form-control values/text are not extracted as surrounding text.'
+                    : 'Editable-region text is intentionally excluded.',
+              }
+            : { status: 'confirmed-absent' };
+      const authoredNameInputs: ProjectTargetEvidence['authoredNameInputs'] extends ProjectEvidence<infer T>
+        ? T
+        : never = [];
+      const ariaLabel = target.attributes.aria.values['aria-label'];
+      if (ariaLabel?.status === 'present') {
+        authoredNameInputs.push({
+          source: 'aria-label',
+          value: ariaLabel.value.value,
+        });
+      } else if (ariaLabel?.status === 'invalid') {
+        authoredNameInputs.push({
+          source: 'aria-label',
+          value: ariaLabel.raw.value,
+        });
+      }
+      const labelledBy = target.attributes.aria.values['aria-labelledby'];
+      if (labelledBy?.status === 'present') {
+        const refs = snapshot.relationships
+          .filter(
+            (relationship) =>
+              'direction' in relationship &&
+              relationship.direction === 'target-to-associated-record' &&
+              relationship.source.id === target.id &&
+              relationship.kind === 'aria-labelledby' &&
+              relationship.destination.status === 'resolved',
+          )
+          .flatMap((relationship) =>
+            'direction' in relationship &&
+            relationship.direction === 'target-to-associated-record' &&
+            relationship.destination.status === 'resolved'
+              ? [relationship.destination.record]
+              : [],
+          )
+          .map((record) => ({ documentId, ...record }));
+        authoredNameInputs.push({
+          source: 'aria-labelledby',
+          value: labelledBy.value.value,
+          referencedRecords: refs,
+        });
+      }
+
+      const labelRelations = snapshot.relationships.filter(
+        (relationship) =>
+          'direction' in relationship &&
+          relationship.direction === 'target-to-associated-record' &&
+          relationship.source.id === target.id &&
+          relationship.kind === 'native-label',
+      );
+      const labelRecords = labelRelations.flatMap((relationship) =>
+        'direction' in relationship &&
+        relationship.direction === 'target-to-associated-record' &&
+        relationship.destination.status === 'resolved'
+          ? [{ documentId, ...relationship.destination.record }]
+          : [],
+      );
+      const ambiguousLabelRelation = labelRelations.some(
+        (relationship) =>
+          'sourceResolution' in relationship &&
+          relationship.sourceResolution?.status === 'ambiguous',
+      );
+      if (labelRecords.length && !ambiguousLabelRelation) {
+        authoredNameInputs.push({
+          source: 'native-label',
+          referencedRecords: labelRecords,
+        });
+      }
+      const visibleText = target.text?.value;
+      if (visibleText) {
+        authoredNameInputs.push({
+          source: 'text-content',
+          value: visibleText,
+        });
+      }
+      if (!target.text?.value && targetElement) {
+        const descendantRecords =
+          descendantNameRecords.get(targetElement) ?? [];
+        if (descendantRecords.length) {
+          authoredNameInputs.push({
+            source: 'descendant-content',
+            referencedRecords: descendantRecords,
+          });
+        }
+      }
+      if (target.kind === 'image' && target.attributes.alt.status === 'present') {
+        authoredNameInputs.push({
+          source: 'alt',
+          value: target.attributes.alt.value.value,
+        });
+      }
+      if (target.attributes.title.status === 'present') {
+        authoredNameInputs.push({
+          source: 'title',
+          value: target.attributes.title.value.value,
+        });
+      }
+      if (
+        target.kind === 'button' &&
+        target.attributes.value?.status === 'present'
+      ) {
+        authoredNameInputs.push({
+          source: 'value-attribute',
+          value: target.attributes.value.value.value,
+        });
+      }
+
+      const contextRefs = relationships
+        .filter(
+          (relationship) =>
+            relationship.destination.status === 'resolved' &&
+            relationship.destination.record.documentId === documentId &&
+            relationship.destination.record.id === target.id &&
+            relationship.source.recordType === 'context',
+        )
+        .map((relationship) => relationship.source);
+      const adjacentRefs = relationships
+        .filter(
+          (relationship) =>
+            relationship.source.recordType === 'target' &&
+            relationship.source.id === target.id &&
+            (relationship.kind === 'adjacent-before' ||
+              relationship.kind === 'adjacent-after') &&
+            relationship.destination.status === 'resolved' &&
+            relationship.destination.record.recordType === 'context',
+        )
+        .flatMap((relationship) =>
+          relationship.destination.status === 'resolved' &&
+          relationship.destination.record.recordType === 'context'
+            ? [relationship.destination.record]
+            : [],
+        );
+      const surroundingRecords = [
+        ...new Map(
+          [...contextRefs, ...adjacentRefs].map((record) => [record.id, record]),
+        ).values(),
+      ];
+      const associationIncomplete =
+        omittedContextElements.size > 0 ||
+        snapshot.completeness.status === 'partial';
+      const nativeLabels: ProjectTargetEvidence['nativeLabels'] =
+        ambiguousLabelRelation
+          ? {
+              status: 'unknown',
+              reason: 'Duplicate authored IDs make the label-to-control association ambiguous.',
+            }
+          : labelRecords.length
+          ? {
+              status: 'present',
+              value: labelRecords,
+              completeness: associationIncomplete ? 'partial' : 'complete',
+            }
+          : associationIncomplete
+            ? {
+                status: 'omitted-incomplete',
+                reason: 'Extraction limits may have omitted label evidence.',
+              }
+            : { status: 'confirmed-absent' };
+      const surroundingDomText: ProjectTargetEvidence['surroundingDomText'] =
+        surroundingRecords.length
+          ? {
+              status: 'present',
+              value: surroundingRecords,
+              completeness: associationIncomplete ? 'partial' : 'complete',
+            }
+          : associationIncomplete
+            ? {
+                status: 'omitted-incomplete',
+                reason: 'Extraction limits may have omitted surrounding DOM context.',
+              }
+            : contextRecords.some((record) => record.text.status === 'present')
+              ? {
+                  status: 'unknown',
+                  reason: 'Text exists in the document but no reliable structural association to this target was established.',
+                }
+              : { status: 'confirmed-absent' };
+
+      return {
+        target: targetRef,
+        targetDomText,
+        authoredNameInputs:
+          authoredNameInputs.length > 0
+            ? {
+                status: 'present',
+                value: authoredNameInputs,
+                completeness: associationIncomplete ? 'partial' : 'complete',
+              }
+            : associationIncomplete
+              ? {
+                  status: 'omitted-incomplete',
+                  reason: 'Extraction limits may have omitted authored naming inputs.',
+                }
+              : { status: 'confirmed-absent' },
+        nativeLabels,
+        surroundingDomText,
+        computedAccessibleName: {
+          status: 'not-captured',
+          reason: 'Static HTML extraction does not compute browser accessible names.',
+        },
+        renderedVisibleText: {
+          status: 'not-captured',
+          reason: 'Static HTML extraction does not determine rendered visibility.',
+        },
+        actionBehavior: {
+          status: 'not-captured',
+          reason: 'Static HTML extraction does not execute or inspect handlers.',
+        },
+      };
+    },
+  );
+  const partialRecordIds = contextRecords
+    .filter((record) => record.completeness === 'partial')
+    .map((record) => record.id);
+  const contextCompletenessPartial =
+    omittedContextElements.size > 0 || partialRecordIds.length > 0;
+  const contextPartial =
+    contextCompletenessPartial;
+  return {
+    documentId,
+    filePath,
+    snapshot,
+    contextRecords,
+    targetEvidence,
+    relationships,
+    links,
+    contextCompleteness: {
+      status: contextCompletenessPartial ? 'partial' : 'complete',
+      omittedRecordCount: omittedContextElements.size,
+      partialRecordIds,
+    },
+    evidenceAvailability: {
+      surroundingText: contextPartial ? 'omitted-incomplete' : 'present',
+      computedAccessibleName: 'not-captured',
+      renderedVisibility: 'not-captured',
+      actionBehavior: 'not-captured',
+      imagePixels: 'not-captured',
+      routeAndComponentIdentity: 'not-captured',
+    },
+  };
 }
 
 function parseIdReferences(value: string | undefined): ParsedIdReferences {
@@ -1059,7 +1809,11 @@ function addStructuralRelationships(state: MutableState): void {
   }
 }
 
-export function extractHtmlContextV2(html: string): ContextSnapshot {
+function extractHtmlContextV2Internal(html: string): {
+  snapshot: ContextSnapshot;
+  elements: HtmlElement[];
+  state: MutableState;
+} {
   const parsedDocument = parse(html, { sourceCodeLocationInfo: true });
   const elements: HtmlElement[] = [];
   const pending: HtmlNode[] = [parsedDocument];
@@ -1232,7 +1986,7 @@ export function extractHtmlContextV2(html: string): ContextSnapshot {
           relationshipResolution: { unresolvedCount, ambiguousCount },
         };
 
-  return {
+  const snapshot: ContextSnapshot = {
     schemaVersion: CONTEXT_SCHEMA_V2,
     document: documentContextValue,
     targets: state.targets,
@@ -1240,6 +1994,27 @@ export function extractHtmlContextV2(html: string): ContextSnapshot {
     relationships: state.relationships,
     completeness,
   };
+  return { snapshot, elements, state };
+}
+
+export function extractHtmlContextV2(html: string): ContextSnapshot {
+  return extractHtmlContextV2Internal(html).snapshot;
+}
+
+export function extractHtmlContextDocumentV2(
+  html: string,
+  documentId: string,
+  filePath: string,
+): ProjectContextDocument {
+  const extracted = extractHtmlContextV2Internal(html);
+  return createProjectDocument(
+    extracted.snapshot,
+    extracted.elements,
+    extracted.state,
+    html,
+    documentId,
+    filePath,
+  );
 }
 
 export function extractHtmlContextResultV2(html: string):
