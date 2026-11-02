@@ -9,7 +9,7 @@ import type {
 export const QWEN_MODEL_ID = 'huggingworld/Qwen3.5-4B-ONNX';
 export const QWEN_MODEL_REVISION =
   '8e3760349b4480f1f1a0f2d2010e46c5863262f1';
-export const QWEN_MAX_NEW_TOKENS = 256;
+export const QWEN_MAX_NEW_TOKENS = 16;
 
 const LOCAL_MODEL_REQUIRED_FILES = [
   'config.json',
@@ -109,7 +109,14 @@ function getLoadedQwenModel(): Promise<LoadedQwenModel> {
   return modelPromise;
 }
 
-async function generateText(prompt: string): Promise<string> {
+export async function initializeQwenModel(): Promise<void> {
+  await getLoadedQwenModel();
+}
+
+async function generateText(
+  prompt: string,
+  maxNewTokens: number,
+): Promise<string> {
   const { processor, model, Tensor } = await getLoadedQwenModel();
   const conversation = [{ role: 'user', content: prompt }];
   const chatTemplateOptions = {
@@ -131,7 +138,7 @@ async function generateText(prompt: string): Promise<string> {
 
   const generated = await model.generate({
     ...inputs,
-    max_new_tokens: QWEN_MAX_NEW_TOKENS,
+    max_new_tokens: maxNewTokens,
     do_sample: false,
   });
 
@@ -152,8 +159,13 @@ async function generateText(prompt: string): Promise<string> {
   return text;
 }
 
-export function generateQwenText(prompt: string): Promise<string> {
-  const result = generationQueue.then(() => generateText(prompt));
+export function generateQwenText(
+  prompt: string,
+  maxNewTokens = QWEN_MAX_NEW_TOKENS,
+): Promise<string> {
+  const result = generationQueue.then(() =>
+    generateText(prompt, maxNewTokens),
+  );
   generationQueue = result.then(
     () => undefined,
     () => undefined,

@@ -8,12 +8,26 @@ import type {
   ContextualAssessment,
   ContextualAssessmentEvidence,
   ContextualAssessmentReport,
+  ContextualInferenceStatus,
   ContextualAssessmentRuleId,
 } from '../types/checker.js';
 import {
   QWEN_MODEL_ID,
   QWEN_MODEL_REVISION,
 } from './qwenModel.js';
+import {
+  assessUnitsWithQwen,
+  type QwenAssessmentWorkItem,
+} from './qwenAssessment.js';
+
+const NAMING_RELATIONSHIPS = new Set(['native-label', 'aria-labelledby']);
+const MAX_QWEN_CALLS_PER_ANALYSIS = 10;
+
+function logAnalysis(event: string, details: Record<string, unknown>): void {
+  if (process.env.RAC_LOG_ANALYSIS === '1') {
+    console.info(`[analysis] ${event} ${JSON.stringify(details)}`);
+  }
+}
 
 function isButtonTarget(target: EvaluationTarget): boolean {
   return (
@@ -33,9 +47,11 @@ function hasAuthoredAriaName(unit: TargetContextInputUnit): boolean {
   );
 }
 
-function hasLabelRelationship(unit: TargetContextInputUnit): boolean {
+function hasFormLabelRelationship(unit: TargetContextInputUnit): boolean {
   return unit.relationships.some(
-    (relationship) => relationship.kind === 'native-label',
+    (relationship) =>
+      relationship.kind === 'native-label' ||
+      relationship.kind === 'aria-labelledby',
   );
 }
 
@@ -46,8 +62,121 @@ function hasOmittedRelationships(unit: TargetContextInputUnit): boolean {
   );
 }
 
+function hasUsableText(
+  value: { value: string; truncated: boolean } | undefined,
+): boolean {
+  return Boolean(value && !value.truncated && value.value.trim());
+}
+
+function hasUsableAriaLabel(unit: TargetContextInputUnit): boolean {
+  const observation = unit.focal.attributes.aria.values['aria-label'];
+  return observation?.status === 'present' && hasUsableText(observation.value);
+}
+
+function hasResolvedNamingEvidence(
+  unit: TargetContextInputUnit,
+  allowedKinds = NAMING_RELATIONSHIPS,
+): boolean {
+  const evidenceIds = new Set(
+    unit.relationships.flatMap((relationship) =>
+      allowedKinds.has(relationship.kind) &&
+      relationship.destination.status === 'resolved' &&
+      relationship.destination.record.recordType === 'evidence' &&
+      relationship.completeness.status === 'complete'
+        ? [relationship.destination.record.id]
+        : [],
+    ),
+  );
+
+  return unit.associatedEvidence.some(
+    ({ evidence }) =>
+      evidenceIds.has(evidence.id) &&
+      evidence.completeness.status === 'complete' &&
+      hasUsableText(evidence.text),
+  );
+}
+
+function hasUsableAriaName(unit: TargetContextInputUnit): boolean {
+  return (
+    hasUsableAriaLabel(unit) ||
+    hasResolvedNamingEvidence(unit, new Set(['aria-labelledby']))
+  );
+}
+
+function hasAuthoredName(unit: TargetContextInputUnit): boolean {
+  return (
+    hasUsableText(unit.focal.text) ||
+    hasUsableAriaLabel(unit) ||
+    hasResolvedNamingEvidence(unit)
+  );
+}
+
+function getIncompleteEvidenceReasons(
+  unit: TargetContextInputUnit,
+): string[] {
+  const reasons = new Set<string>();
+
+  if (unit.focal.text?.truncated) {
+    reasons.add('truncated-authored-name');
+  }
+  if (unit.focal.attributes.aria.truncated) {
+    reasons.add('truncated-aria-name');
+  }
+  if (
+    unit.focal.attributes.aria.values['aria-label']?.status === 'present' &&
+    unit.focal.attributes.aria.values['aria-label'].value.truncated
+  ) {
+    reasons.add('truncated-authored-name');
+  }
+  if (
+    unit.relationships.some(
+      (relationship) =>
+        NAMING_RELATIONSHIPS.has(relationship.kind) &&
+        (relationship.destination.status !== 'resolved' ||
+          relationship.completeness.status === 'partial'),
+    )
+  ) {
+    reasons.add('unambiguous-naming-reference');
+  }
+  if (
+    unit.relationships.some(
+      (relationship) => {
+        const destination = relationship.destination;
+        if (
+          !NAMING_RELATIONSHIPS.has(relationship.kind) ||
+          destination.status !== 'resolved' ||
+          destination.record.recordType !== 'evidence'
+        ) {
+          return false;
+        }
+
+        const evidenceId = destination.record.id;
+        return !unit.associatedEvidence.some(
+          ({ evidence }) =>
+            evidence.id === evidenceId &&
+            evidence.completeness.status === 'complete' &&
+            hasUsableText(evidence.text),
+        );
+      },
+    )
+  ) {
+    reasons.add('usable-associated-name-required');
+  }
+  if (
+    unit.associatedEvidence.some(
+      ({ evidence }) =>
+        evidence.completeness.status === 'partial' || evidence.text?.truncated,
+    )
+  ) {
+    reasons.add('complete-associated-evidence');
+  }
+
+  return [...reasons];
+}
+
 function toEvidenceRecords(
   unit: TargetContextInputUnit,
+  ruleId: ContextualAssessmentRuleId,
 ): ContextualAssessmentEvidence[] {
   const evidence = new Map<string, ContextualAssessmentEvidence>();
   const targetRecord: ContextRecordRef = {
@@ -59,7 +188,24 @@ function toEvidenceRecords(
     ...(unit.focal.text ? { text: unit.focal.text.value } : {}),
   });
 
+  const allowedRelationshipKinds =
+    ruleId === 'ARIA-NAME-CLARITY'
+      ? new Set(['aria-labelledby'])
+      : new Set(['native-label', 'aria-labelledby']);
+  const namingEvidenceIds = new Set(
+    unit.relationships.flatMap((relationship) =>
+      allowedRelationshipKinds.has(relationship.kind) &&
+      relationship.destination.status === 'resolved' &&
+      relationship.destination.record.recordType === 'evidence'
+        ? [relationship.destination.record.id]
+        : [],
+    ),
+  );
+
   for (const associated of unit.associatedEvidence) {
+    if (!namingEvidenceIds.has(associated.evidence.id)) {
+      continue;
+    }
     const record: ContextRecordRef = {
       recordType: 'evidence',
       id: associated.evidence.id,
@@ -85,7 +231,7 @@ function getApplicableRules(
   }
   if (
     unit.focal.kind === 'form-control' &&
-    (hasLabelRelationship(unit) || hasOmittedRelationships(unit))
+    (hasFormLabelRelationship(unit) || hasOmittedRelationships(unit))
   ) {
     rules.push('FORM-LABEL-RELEVANCE');
   }
@@ -101,21 +247,7 @@ function getMissingPrerequisites(
   unit: TargetContextInputUnit,
   result: Extract<ContextAdapterResult, { status: 'ready' | 'partial' }>,
 ): string[] {
-  const missing =
-    ruleId === 'FORM-LABEL-RELEVANCE'
-      ? [
-          'browser-computed-accessible-name',
-          'independently-evidenced-expected-information',
-        ]
-      : ruleId === 'BUTTON-PURPOSE-CLARITY'
-        ? [
-            'browser-computed-accessible-name',
-            'evidenced-purpose-or-action',
-          ]
-        : [
-            'browser-computed-accessible-name',
-            'evidenced-target-purpose',
-          ];
+  const missing = getIncompleteEvidenceReasons(unit);
 
   if (
     result.status === 'partial' ||
@@ -125,62 +257,40 @@ function getMissingPrerequisites(
     missing.push('complete-context-capture');
   }
 
-  if (
-    ruleId === 'FORM-LABEL-RELEVANCE' &&
-    unit.relationships.some(
-      (relationship) =>
-        relationship.kind === 'native-label' &&
-        (relationship.destination.status !== 'resolved' ||
-          relationship.completeness.status === 'partial'),
-    )
-  ) {
-    missing.push('unambiguous-native-label-association');
+  if (ruleId === 'FORM-LABEL-RELEVANCE' && !hasResolvedNamingEvidence(unit)) {
+    missing.push(
+      hasOmittedRelationships(unit)
+        ? 'label-association-not-captured'
+        : 'resolved-nonempty-label-required',
+    );
   }
-  if (
-    ruleId === 'FORM-LABEL-RELEVANCE' &&
-    !hasLabelRelationship(unit) &&
-    hasOmittedRelationships(unit)
-  ) {
-    missing.push('native-label-association-not-captured');
+  if (ruleId === 'ARIA-NAME-CLARITY' && !hasUsableAriaName(unit)) {
+    missing.push('usable-authored-aria-name-required');
   }
-  if (
-    ruleId === 'ARIA-NAME-CLARITY' &&
-    unit.relationships.some(
-      (relationship) =>
-        relationship.kind === 'aria-labelledby' &&
-        (relationship.destination.status !== 'resolved' ||
-          relationship.completeness.status === 'partial'),
-    )
-  ) {
-    missing.push('unambiguous-aria-naming-reference');
-  }
-  if (
-    unit.associatedEvidence.some(
-      (associated) => associated.evidence.completeness.status === 'partial',
-    )
-  ) {
-    missing.push('complete-associated-evidence');
+  if (ruleId === 'BUTTON-PURPOSE-CLARITY' && !hasAuthoredName(unit)) {
+    missing.push('usable-authored-name-required');
   }
 
-  return missing;
+  return [...new Set(missing)];
 }
 
 function makeAbstention(
   ruleId: ContextualAssessmentRuleId,
   unit: TargetContextInputUnit,
-  result: Extract<ContextAdapterResult, { status: 'ready' | 'partial' }>,
+  uncertainty: string[],
+  assessment: 'insufficient_context' | 'not_assessed' = 'insufficient_context',
 ): ContextualAssessment {
-  const missing = getMissingPrerequisites(ruleId, unit, result);
-
   return {
     ruleId,
     targetId: unit.focal.id,
-    assessment: 'insufficient_context',
-    evidence: toEvidenceRecords(unit),
+    assessment,
+    evidence: toEvidenceRecords(unit, ruleId),
     explanation:
-      'No accessibility conclusion was made. Static V2 context does not include the evidence required by this rule.',
+      assessment === 'not_assessed'
+        ? 'No model assessment was produced. Qwen may be disabled or inference may have failed.'
+        : 'No accessibility conclusion was made. This experimental review requires complete authored naming text and supporting context.',
     confidence: null,
-    uncertainty: missing,
+    uncertainty,
     source: 'evidence_gate',
   };
 }
@@ -196,9 +306,9 @@ function unavailableReport(errorCode: string): ContextualAssessmentReport {
   };
 }
 
-export function assessAdaptedContext(
+export async function assessAdaptedContext(
   result: ContextAdapterResult | undefined,
-): ContextualAssessmentReport {
+): Promise<ContextualAssessmentReport> {
   if (!result) {
     return unavailableReport('context-extraction-failed');
   }
@@ -218,20 +328,154 @@ export function assessAdaptedContext(
     };
   }
 
-  const assessments = result.input.units.flatMap((unit) =>
-    getApplicableRules(unit).map((ruleId) =>
-      makeAbstention(ruleId, unit, result),
-    ),
+  const work = result.input.units.flatMap((unit) =>
+    getApplicableRules(unit).map((ruleId) => ({ ruleId, unit })),
   );
+  logAnalysis('context extracted', {
+    status: result.status,
+    documentTitle:
+      result.input.document.title.status === 'present'
+        ? result.input.document.title.value.slice(0, 100)
+        : result.input.document.title.status,
+    targetCount: result.input.units.length,
+    candidateCount: work.length,
+    targets: work.slice(0, MAX_QWEN_CALLS_PER_ANALYSIS).map(({ ruleId, unit }) => ({
+      id: unit.focal.id,
+      kind: unit.focal.kind,
+      ruleId,
+      text: unit.focal.text?.value.slice(0, 100) ?? '',
+      authoredAriaLabel:
+        unit.focal.attributes.aria.values['aria-label']?.status === 'present'
+          ? unit.focal.attributes.aria.values['aria-label'].value.value.slice(0, 100)
+          : undefined,
+      namingEvidence: unit.associatedEvidence
+        .filter(({ relationships }) =>
+          relationships.some((relationship) =>
+            NAMING_RELATIONSHIPS.has(relationship.kind),
+          ),
+        )
+        .flatMap(({ evidence }) =>
+          evidence.text ? [evidence.text.value.slice(0, 100)] : [],
+        ),
+      completeness: unit.completeness.status,
+    })),
+  });
+  if (work.length === 0) {
+    return {
+      modelId: QWEN_MODEL_ID,
+      modelRevision: QWEN_MODEL_REVISION,
+      inferenceStatus:
+        result.status === 'partial'
+          ? 'not_invoked_insufficient_context'
+          : 'not_invoked_no_targets',
+      modelLoaded: false,
+      assessments: [],
+    };
+  }
+
+  const enabled = process.env.RAC_ENABLE_QWEN_ASSESSMENTS === '1';
+  const assessmentByWorkIndex = new Map<number, ContextualAssessment>();
+  let eligibleCount = 0;
+  let generatedCount = 0;
+  let limitReached = false;
+  let inferenceFailed = false;
+
+  const eligibleWork: Array<QwenAssessmentWorkItem & { workIndex: number }> = [];
+  for (const [workIndex, { ruleId, unit }] of work.entries()) {
+    const missing = getMissingPrerequisites(ruleId, unit, result);
+    if (missing.length > 0) {
+      assessmentByWorkIndex.set(
+        workIndex,
+        makeAbstention(ruleId, unit, missing),
+      );
+      continue;
+    }
+
+    eligibleCount += 1;
+    if (!enabled) {
+      assessmentByWorkIndex.set(
+        workIndex,
+        makeAbstention(
+          ruleId,
+          unit,
+          ['experimental-model-disabled'],
+          'not_assessed',
+        ),
+      );
+      continue;
+    }
+    if (eligibleWork.length < MAX_QWEN_CALLS_PER_ANALYSIS) {
+      eligibleWork.push({ ruleId, unit, workIndex });
+    } else {
+      limitReached = true;
+      assessmentByWorkIndex.set(
+        workIndex,
+        makeAbstention(
+          ruleId,
+          unit,
+          ['per-document-qwen-target-limit-reached'],
+          'not_assessed',
+        ),
+      );
+    }
+  }
+
+  if (enabled && eligibleWork.length > 0) {
+    try {
+      const generatedAssessments = await assessUnitsWithQwen(
+        eligibleWork.map(({ ruleId, unit }) => ({ ruleId, unit })),
+      );
+      generatedAssessments.forEach((assessment, index) => {
+        const workItem = eligibleWork[index];
+        if (workItem) {
+          assessmentByWorkIndex.set(workItem.workIndex, assessment);
+        }
+      });
+      generatedCount = eligibleWork.length;
+    } catch (error) {
+      inferenceFailed = true;
+      console.error(
+        'Qwen contextual assessment failed; IBM accessibility results are unaffected.',
+        error instanceof Error ? error.message : 'Unknown Qwen error',
+      );
+      eligibleWork.forEach(({ ruleId, unit, workIndex }) => {
+        assessmentByWorkIndex.set(
+          workIndex,
+          makeAbstention(
+            ruleId,
+            unit,
+            ['qwen-inference-failed'],
+            'not_assessed',
+          ),
+        );
+      });
+    }
+  }
+
+  const assessments = work.flatMap((_, index) => {
+    const assessment = assessmentByWorkIndex.get(index);
+    return assessment ? [assessment] : [];
+  });
+
+  let inferenceStatus: ContextualInferenceStatus
+  if (inferenceFailed) {
+    inferenceStatus = 'failed'
+  } else if (limitReached) {
+    inferenceStatus = 'completed_with_limit'
+  } else if (generatedCount > 0) {
+    inferenceStatus = 'completed'
+  } else if (!enabled && eligibleCount > 0) {
+    inferenceStatus = 'not_invoked_disabled'
+  } else {
+    inferenceStatus = 'not_invoked_insufficient_context'
+  }
 
   return {
     modelId: QWEN_MODEL_ID,
     modelRevision: QWEN_MODEL_REVISION,
-    inferenceStatus:
-      assessments.length > 0 || result.status === 'partial'
-        ? 'not_invoked_insufficient_context'
-        : 'not_invoked_no_targets',
-    modelLoaded: false,
+    inferenceStatus,
+    modelLoaded: generatedCount > 0,
     assessments,
+    ...(inferenceFailed ? { errorCode: 'qwen-inference-failed' } : {}),
   };
 }

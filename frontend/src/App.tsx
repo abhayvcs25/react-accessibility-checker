@@ -20,7 +20,11 @@ type AnalyzeIssue = {
 type ContextualAssessment = {
   ruleId: string
   targetId: string
-  assessment: 'potential_issue' | 'no_issue_detected' | 'insufficient_context'
+  assessment:
+    | 'potential_issue'
+    | 'no_issue_detected'
+    | 'insufficient_context'
+    | 'not_assessed'
   evidence: {
     record: { recordType: 'target' | 'evidence'; id: string }
     text?: string
@@ -36,9 +40,12 @@ type ContextualAssessmentReport = {
   modelRevision: string
   inferenceStatus:
     | 'not_invoked_insufficient_context'
+    | 'not_invoked_disabled'
     | 'not_invoked_no_targets'
     | 'unavailable'
     | 'failed'
+    | 'completed'
+    | 'completed_with_limit'
   modelLoaded: boolean
   assessments: ContextualAssessment[]
   errorCode?: string
@@ -99,9 +106,12 @@ function isContextualAssessment(value: unknown): value is ContextualAssessment {
     isRecord(value) &&
     typeof value.ruleId === 'string' &&
     typeof value.targetId === 'string' &&
-    ['potential_issue', 'no_issue_detected', 'insufficient_context'].includes(
-      String(value.assessment),
-    ) &&
+    [
+      'potential_issue',
+      'no_issue_detected',
+      'insufficient_context',
+      'not_assessed',
+    ].includes(String(value.assessment)) &&
     Array.isArray(value.evidence) &&
     value.evidence.every(
       (item) =>
@@ -130,9 +140,12 @@ function isContextualAssessmentReport(
     typeof value.modelRevision === 'string' &&
     [
       'not_invoked_insufficient_context',
+      'not_invoked_disabled',
       'not_invoked_no_targets',
       'unavailable',
       'failed',
+      'completed',
+      'completed_with_limit',
     ].includes(String(value.inferenceStatus)) &&
     typeof value.modelLoaded === 'boolean' &&
     Array.isArray(value.assessments) &&
@@ -179,7 +192,18 @@ function getAssessmentLabel(assessment: ContextualAssessment['assessment']) {
       return 'No issue detected'
     case 'insufficient_context':
       return 'Insufficient context'
+    case 'not_assessed':
+      return 'Not assessed'
   }
+}
+
+function getAssessmentSourceLabel(assessment: ContextualAssessment): string {
+  if (assessment.source === 'qwen3.5-4b') {
+    return 'Qwen3.5-4B local model'
+  }
+  return assessment.assessment === 'not_assessed'
+    ? 'Not assessed by model'
+    : 'Evidence gate'
 }
 
 function getInferenceStatusMessage(
@@ -190,10 +214,16 @@ function getInferenceStatusMessage(
       return 'The model was not invoked because the captured static context does not include required evidence.'
     case 'not_invoked_no_targets':
       return 'No targets matched the current contextual-assessment pilot checks.'
+    case 'not_invoked_disabled':
+      return 'Experimental Qwen assessment is disabled. IBM findings remain unaffected.'
     case 'unavailable':
       return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
     case 'failed':
       return 'Local contextual inference failed. IBM findings remain unaffected.'
+    case 'completed':
+      return 'Qwen returned experimental authored-name wording feedback. This is not a WCAG or IBM finding.'
+    case 'completed_with_limit':
+      return 'Qwen reached the 10-call per-document limit. Remaining eligible targets were not assessed.'
   }
 }
 
@@ -689,9 +719,7 @@ function App() {
                             {getAssessmentLabel(assessment.assessment)}
                           </span>
                           <span className="contextual-assessment-source">
-                            {assessment.source === 'evidence_gate'
-                              ? 'Model not invoked'
-                              : 'Qwen3.5-4B local model'}
+                            {getAssessmentSourceLabel(assessment)}
                           </span>
                           <code className="finding-rule">
                             {assessment.ruleId}

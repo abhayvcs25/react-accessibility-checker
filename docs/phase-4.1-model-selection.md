@@ -1,6 +1,26 @@
 # Phase 4.1 — Pretrained ML Model Selection and Technical Preparation
 
-**Status:** Corrective research revision, 2026-11-01. No application source was changed, no packages or model files were installed/downloaded, and no model was trained.
+**Status at the 2026-11-01 research revision:** No application source was changed, no packages or model files were installed/downloaded, and no model was trained.
+
+### Phase 4.2 implementation update — 2026-11-02
+
+The project selected its already-installed `huggingworld/Qwen3.5-4B-ONNX`
+snapshot at revision `8e3760349b4480f1f1a0f2d2010e46c5863262f1` for the
+experimental implementation path; this is distinct from the Qwen2.5 comparison
+candidate discussed below. The exact local snapshot passed an offline
+load/generation smoke test, and the authored-name assessment path returned
+schema-valid output. This does not establish accessibility accuracy.
+
+The API assessment path is enabled automatically by the development entry point
+(`npm run dev`), which preloads the local model in the backend process. Other
+runtime entry points remain opt-in with `RAC_ENABLE_QWEN_ASSESSMENTS=1`. Up to
+10 eligible target/rule assessments are grouped into a single compact Qwen
+generation with a 16-token cap and remain separate from IBM findings. The
+previous, longer-output build took about 114 seconds for one warm CPU assessment;
+the optimized version is being re-measured against the one-minute target.
+Human-reviewed benchmark results and deployment resource budgets remain
+outstanding, so this is not approval for production deployment. No other model
+was examined as part of this follow-up.
 
 ## Executive conclusion
 
@@ -10,7 +30,7 @@ For a future, controlled feasibility benchmark, use **HuggingFaceTB/SmolLM2-360M
 
 The only proposed assessment scope is conditional review of **authored naming text** against text explicitly captured in V2 native-label and ARIA naming evidence. Image-alt relevance and general link-purpose-in-context assessment are deferred. Even the retained scope is an experiment with frequent “insufficient context,” not an accessibility finding.
 
-**Readiness verdict:** NOT APPROVED for Phase 4.2 implementation. The licensed candidate still needs exact-runtime smoke testing and a human-reviewed comparison benchmark; resource requirements are unknown until measured. Phase 4.2 must not train a model.
+**Readiness verdict at this research revision:** NOT APPROVED for production use. The candidate then under consideration still needed exact-runtime smoke testing and a human-reviewed comparison benchmark; resource requirements were unknown until measured. Phase 4.2 must not train a model.
 
 ## 1. Current project architecture and API
 
@@ -18,8 +38,8 @@ The only proposed assessment scope is conditional review of **authored naming te
 - **Backend:** Express 5, ESM, TypeScript, `parse5`, and IBM `accessibility-checker`; `POST /api/analyze` is the route. See [`backend/src/index.ts`](../backend/src/index.ts), [`backend/src/routes/analyze.ts`](../backend/src/routes/analyze.ts), and [`backend/package.json`](../backend/package.json).
 - **TypeScript:** ES2022 target, NodeNext module and resolution, strict mode. The backend package does not declare `engines.node`. See [`backend/tsconfig.json`](../backend/tsconfig.json).
 - **Tests:** Backend uses Vitest (`npm test`); frontend has build/lint scripts but no declared test script.
-- **Existing API:** Request is `{ html, filename }`. The success response contains `filename`, `analyzedAt`, IBM severity summary counts, and normalized IBM `issues`. There is no context or ML field today. Types are in [`backend/src/types/checker.ts`](../backend/src/types/checker.ts).
-- **Active analyzer path:** [`analyzeHtml`](../backend/src/services/checker.ts) calls V2 extraction and adaptation, logs when unavailable, then currently discards the extracted/adapted result and returns IBM output. Phase 4.2 must change orchestration to retain/pass that result once; it must not run extraction or parsing a second time.
+- **Existing API:** Request is `{ html, filename }`. The response contains `filename`, `analyzedAt`, IBM severity summary counts, normalized IBM `issues`, and a separate `contextualAssessments` property. Types are in [`backend/src/types/checker.ts`](../backend/src/types/checker.ts).
+- **Active analyzer path:** [`analyzeHtml`](../backend/src/services/checker.ts) calls V2 extraction and adaptation once and passes the adapted result to the contextual assessment service. It does not duplicate extraction or parsing. Qwen inference remains off unless explicitly enabled.
 
 ## 2. Verified Phase 3 context schema
 
@@ -152,12 +172,10 @@ Do not install or run this plan in Phase 4.1. In Phase 4.2, prepare and freeze a
 
 ## 10. Decision and next gate
 
-The report supports only a **controlled feasibility benchmark** as a possible next phase. It does not support shipping ML assessments, calling any model the best accessibility model, or adding ML to the current API. SmolLM2-360M is the first candidate to test because its exact model card revision declares Apache-2.0; this is a candidate selection for evaluation, not an accuracy recommendation. Keep Qwen blocked until the ONNX conversion licensing is resolved.
+The original report supports only a **controlled feasibility benchmark** as a possible next phase. It does not support shipping ML assessments or calling any model the best accessibility model. Its SmolLM2-360M recommendation and Qwen2.5 licensing concern are historical candidate comparisons; the current Qwen3.5 project choice is described in the implementation update above and is not an accuracy recommendation.
 
-Phase 4.2 implementation readiness remains **NOT APPROVED** until:
+Phase 4.2 production readiness remains **NOT APPROVED** until:
 
-- exact pinned SmolLM2-360M + Node + Transformers.js loading/inference passes smoke tests;
-- the application’s actual adapted V2 context is passed once without extraction duplication;
 - the human-reviewed held-out benchmark meets predeclared acceptance criteria; and
 - measured resource requirements meet an agreed deployment budget.
 

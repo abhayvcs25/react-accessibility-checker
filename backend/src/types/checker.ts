@@ -155,7 +155,8 @@ export type ContextualAssessmentRuleId =
 export type ContextualAssessmentValue =
   | 'potential_issue'
   | 'no_issue_detected'
-  | 'insufficient_context';
+  | 'insufficient_context'
+  | 'not_assessed';
 
 export interface ContextualAssessmentEvidence {
   record: ContextRecordRef;
@@ -175,9 +176,12 @@ export interface ContextualAssessment {
 
 export type ContextualInferenceStatus =
   | 'not_invoked_insufficient_context'
+  | 'not_invoked_disabled'
   | 'not_invoked_no_targets'
   | 'unavailable'
-  | 'failed';
+  | 'failed'
+  | 'completed'
+  | 'completed_with_limit';
 
 export interface ContextualAssessmentReport {
   modelId: string;

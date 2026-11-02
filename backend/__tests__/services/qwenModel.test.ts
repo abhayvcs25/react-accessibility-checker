@@ -39,6 +39,8 @@ import {
   closeQwenModel,
   generateQwenText,
   getQwenModelCacheDirectory,
+  initializeQwenModel,
+  QWEN_MAX_NEW_TOKENS,
   QWEN_MODEL_ID,
   QWEN_MODEL_REVISION,
 } from '../../src/services/qwenModel.js';
@@ -95,7 +97,7 @@ describe('Qwen local inference runtime', () => {
     );
     expect(mocks.generate).toHaveBeenCalledWith(
       expect.objectContaining({
-        max_new_tokens: 256,
+        max_new_tokens: QWEN_MAX_NEW_TOKENS,
         do_sample: false,
       }),
     );
@@ -109,10 +111,36 @@ describe('Qwen local inference runtime', () => {
     );
   });
 
+  it('propagates model load failures and allows a later retry', async () => {
+    mocks.loadModel.mockRejectedValueOnce(new Error('offline model unavailable'));
+
+    await expect(generateQwenText('First attempt')).rejects.toThrow(
+      'offline model unavailable',
+    );
+    await expect(generateQwenText('Retry attempt')).resolves.toBe('{"ok":true}');
+
+    expect(mocks.loadProcessor).toHaveBeenCalledTimes(2);
+    expect(mocks.loadModel).toHaveBeenCalledTimes(2);
+  });
+
   it('uses the configured external model cache directory', () => {
     process.env.RAC_MODEL_CACHE_DIR = 'C:\\local-model-cache';
 
     expect(getQwenModelCacheDirectory()).toBe('C:\\local-model-cache');
+  });
+
+  it('can preload the pinned model without running inference', async () => {
+    await initializeQwenModel();
+
+    expect(mocks.loadProcessor).toHaveBeenCalledOnce();
+    expect(mocks.loadModel).toHaveBeenCalledOnce();
+    expect(mocks.generate).not.toHaveBeenCalled();
+
+    await generateQwenText('Use only the supplied evidence.');
+
+    expect(mocks.loadProcessor).toHaveBeenCalledOnce();
+    expect(mocks.loadModel).toHaveBeenCalledOnce();
+    expect(mocks.generate).toHaveBeenCalledOnce();
   });
 
   it('loads a complete pinned snapshot directly from the external cache', async () => {
