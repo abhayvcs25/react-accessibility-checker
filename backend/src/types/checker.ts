@@ -180,6 +180,8 @@ export type ContextualInferenceStatus =
   | 'not_invoked_no_targets'
   | 'unavailable'
   | 'failed'
+  | 'timed_out'
+  | 'busy'
   | 'completed'
   | 'completed_with_limit';
 

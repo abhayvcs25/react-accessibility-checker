@@ -44,6 +44,8 @@ type ContextualAssessmentReport = {
     | 'not_invoked_no_targets'
     | 'unavailable'
     | 'failed'
+    | 'timed_out'
+    | 'busy'
     | 'completed'
     | 'completed_with_limit'
   modelLoaded: boolean
@@ -144,6 +146,8 @@ function isContextualAssessmentReport(
       'not_invoked_no_targets',
       'unavailable',
       'failed',
+      'timed_out',
+      'busy',
       'completed',
       'completed_with_limit',
     ].includes(String(value.inferenceStatus)) &&
@@ -220,6 +224,10 @@ function getInferenceStatusMessage(
       return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
     case 'failed':
       return 'Local contextual inference failed. IBM findings remain unaffected.'
+    case 'timed_out':
+      return 'Qwen exceeded its 40-second response budget. IBM findings are returned; this target was not assessed by Qwen.'
+    case 'busy':
+      return 'A previous Qwen inference is still running. IBM findings are returned without waiting for another inference.'
     case 'completed':
       return 'Qwen returned experimental authored-name wording feedback. This is not a WCAG or IBM finding.'
     case 'completed_with_limit':

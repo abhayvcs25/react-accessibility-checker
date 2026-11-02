@@ -1,69 +1,81 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => {
-  const processor = Object.assign(vi.fn(), {
-    apply_chat_template: vi.fn(),
-    batch_decode: vi.fn(),
-  });
+interface WorkerRequestForTest {
+  id: number;
+  action: 'initialize' | 'generate' | 'dispose';
+  prompt?: string;
+  maxNewTokens?: number;
+}
 
-  return {
-    processor,
-    loadProcessor: vi.fn(),
-    loadModel: vi.fn(),
-    generate: vi.fn(),
-    dispose: vi.fn(),
-  };
-});
+interface FakeWorkerForTest {
+  handlers: Map<string, (...args: unknown[]) => void>;
+  on: (event: string, handler: (...args: unknown[]) => void) => unknown;
+  postMessage: (request: WorkerRequestForTest) => void;
+  terminate: ReturnType<typeof vi.fn>;
+}
 
-vi.mock('@huggingface/transformers', () => {
-  class Tensor {
-    dims = [1, 8];
-    slice = vi.fn().mockReturnValue({});
-  }
+type WorkerRequestHandler = (
+  worker: FakeWorkerForTest,
+  request: WorkerRequestForTest,
+) => void;
 
-  mocks.generate.mockImplementation(() => new Tensor());
+const mocks = vi.hoisted(() => ({
+  workers: [] as FakeWorkerForTest[],
+  requests: [] as WorkerRequestForTest[],
+  responses: [] as Array<{ text?: string; error?: string }>,
+  onRequest: undefined as WorkerRequestHandler | undefined,
+}));
 
-  return {
-    AutoProcessor: { from_pretrained: mocks.loadProcessor },
-    Qwen3_5ForConditionalGeneration: {
-      from_pretrained: mocks.loadModel,
-    },
-    Tensor,
-  };
-});
+vi.mock('node:worker_threads', () => ({
+  Worker: class {
+    handlers = new Map<string, (...args: unknown[]) => void>();
+    terminate = vi.fn().mockResolvedValue(0);
+
+    constructor() {
+      mocks.workers.push(this);
+    }
+
+    on(event: string, handler: (...args: unknown[]) => void) {
+      this.handlers.set(event, handler);
+      return this;
+    }
+
+    postMessage(request: WorkerRequestForTest) {
+      mocks.requests.push(request);
+      if (mocks.onRequest) {
+        mocks.onRequest(this, request);
+        return;
+      }
+      const response = mocks.responses.shift() ?? {};
+      queueMicrotask(() => {
+        this.handlers.get('message')?.({
+          id: request.id,
+          action: request.action,
+          ...response,
+        });
+      });
+    }
+  },
+}));
 
 import {
   closeQwenModel,
   generateQwenText,
   getQwenModelCacheDirectory,
   initializeQwenModel,
+  isQwenGenerationInProgress,
   QWEN_MAX_NEW_TOKENS,
   QWEN_MODEL_ID,
   QWEN_MODEL_REVISION,
 } from '../../src/services/qwenModel.js';
 
-describe('Qwen local inference runtime', () => {
+describe('Qwen worker client', () => {
   beforeEach(() => {
     process.env.RAC_MODEL_CACHE_DIR = 'C:\\nonexistent-qwen-test-cache';
-    mocks.processor.mockReset().mockResolvedValue({
-      input_ids: { dims: [1, 4] },
-    });
-    mocks.processor.apply_chat_template
-      .mockReset()
-      .mockReturnValue('formatted prompt');
-    mocks.processor.batch_decode
-      .mockReset()
-      .mockReturnValue(['{"ok":true}']);
-    mocks.loadProcessor.mockReset().mockResolvedValue(mocks.processor);
-    mocks.loadModel.mockReset().mockResolvedValue({
-      generate: mocks.generate,
-      dispose: mocks.dispose,
-    });
-    mocks.generate.mockClear();
-    mocks.dispose.mockReset().mockResolvedValue(undefined);
+    mocks.workers.length = 0;
+    mocks.requests.length = 0;
+    mocks.responses.length = 0;
+    mocks.onRequest = undefined;
   });
 
   afterEach(async () => {
@@ -71,127 +83,121 @@ describe('Qwen local inference runtime', () => {
     delete process.env.RAC_MODEL_CACHE_DIR;
   });
 
-  it('loads the pinned model lazily and returns decoded text', async () => {
-    expect(mocks.loadProcessor).not.toHaveBeenCalled();
-    expect(mocks.loadModel).not.toHaveBeenCalled();
+  it('preloads the model once in a worker and generates without reloading', async () => {
+    mocks.responses.push({}, { text: '0' });
 
-    await expect(generateQwenText('Use only the supplied evidence.')).resolves.toBe(
-      '{"ok":true}',
-    );
+    await initializeQwenModel();
+    await expect(generateQwenText('Classify this name.')).resolves.toBe('0');
 
-    expect(mocks.loadProcessor).toHaveBeenCalledWith(
-      QWEN_MODEL_ID,
-      expect.objectContaining({ revision: QWEN_MODEL_REVISION }),
-    );
-    expect(mocks.loadModel).toHaveBeenCalledWith(
-      QWEN_MODEL_ID,
-      expect.objectContaining({
-        revision: QWEN_MODEL_REVISION,
-        device: 'cpu',
-        dtype: {
-          embed_tokens: 'q4',
-          vision_encoder: 'fp16',
-          decoder_model_merged: 'q4',
-        },
-      }),
-    );
-    expect(mocks.generate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        max_new_tokens: QWEN_MAX_NEW_TOKENS,
-        do_sample: false,
-      }),
-    );
-    expect(mocks.processor.apply_chat_template).toHaveBeenCalledWith(
-      [{ role: 'user', content: 'Use only the supplied evidence.' }],
-      expect.objectContaining({
-        add_generation_prompt: true,
-        tokenize: false,
-        enable_thinking: false,
-      }),
-    );
-  });
-
-  it('propagates model load failures and allows a later retry', async () => {
-    mocks.loadModel.mockRejectedValueOnce(new Error('offline model unavailable'));
-
-    await expect(generateQwenText('First attempt')).rejects.toThrow(
-      'offline model unavailable',
-    );
-    await expect(generateQwenText('Retry attempt')).resolves.toBe('{"ok":true}');
-
-    expect(mocks.loadProcessor).toHaveBeenCalledTimes(2);
-    expect(mocks.loadModel).toHaveBeenCalledTimes(2);
+    expect(mocks.workers).toHaveLength(1);
+    expect(mocks.requests.map(({ action }) => action)).toEqual([
+      'initialize',
+      'generate',
+    ]);
+    expect(mocks.requests[1]).toMatchObject({
+      prompt: 'Classify this name.',
+      maxNewTokens: QWEN_MAX_NEW_TOKENS,
+    });
   });
 
   it('uses the configured external model cache directory', () => {
     process.env.RAC_MODEL_CACHE_DIR = 'C:\\local-model-cache';
 
     expect(getQwenModelCacheDirectory()).toBe('C:\\local-model-cache');
-  });
-
-  it('can preload the pinned model without running inference', async () => {
-    await initializeQwenModel();
-
-    expect(mocks.loadProcessor).toHaveBeenCalledOnce();
-    expect(mocks.loadModel).toHaveBeenCalledOnce();
-    expect(mocks.generate).not.toHaveBeenCalled();
-
-    await generateQwenText('Use only the supplied evidence.');
-
-    expect(mocks.loadProcessor).toHaveBeenCalledOnce();
-    expect(mocks.loadModel).toHaveBeenCalledOnce();
-    expect(mocks.generate).toHaveBeenCalledOnce();
-  });
-
-  it('loads a complete pinned snapshot directly from the external cache', async () => {
-    const cacheDirectory = mkdtempSync(join(tmpdir(), 'rac-qwen-cache-'));
-    const modelDirectory = join(
-      cacheDirectory,
-      QWEN_MODEL_ID,
-      QWEN_MODEL_REVISION,
+    expect(QWEN_MODEL_ID).toBe('huggingworld/Qwen3.5-4B-ONNX');
+    expect(QWEN_MODEL_REVISION).toBe(
+      '8e3760349b4480f1f1a0f2d2010e46c5863262f1',
     );
-    const files = [
-      'config.json',
-      'generation_config.json',
-      'preprocessor_config.json',
-      'tokenizer.json',
-      'tokenizer_config.json',
-      'onnx/decoder_model_merged_q4.onnx',
-      'onnx/decoder_model_merged_q4.onnx_data',
-      'onnx/decoder_model_merged_q4.onnx_data_1',
-      'onnx/embed_tokens_q4.onnx',
-      'onnx/embed_tokens_q4.onnx_data',
-      'onnx/vision_encoder_fp16.onnx',
-      'onnx/vision_encoder_fp16.onnx_data',
-    ];
-    for (const file of files) {
-      const path = join(modelDirectory, file);
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, '');
-    }
-    process.env.RAC_MODEL_CACHE_DIR = cacheDirectory;
-
-    try {
-      await generateQwenText('Use only the supplied evidence.');
-
-      expect(mocks.loadProcessor).toHaveBeenCalledWith(
-        modelDirectory,
-        { local_files_only: true },
-      );
-      expect(mocks.loadModel).toHaveBeenCalledWith(
-        modelDirectory,
-        expect.objectContaining({ local_files_only: true, device: 'cpu' }),
-      );
-    } finally {
-      await closeQwenModel();
-      rmSync(cacheDirectory, { recursive: true, force: true });
-    }
   });
 
-  it('disposes the loaded model explicitly', async () => {
-    await generateQwenText('Test prompt');
+  it('retries model generation after a worker-reported inference error', async () => {
+    mocks.responses.push({}, { error: 'model unavailable' }, { text: '0' });
+
+    await expect(generateQwenText('First attempt')).rejects.toThrow(
+      'model unavailable',
+    );
+    await expect(generateQwenText('Retry attempt')).resolves.toBe('0');
+
+    expect(
+      mocks.requests.filter(({ action }) => action === 'initialize'),
+    ).toHaveLength(1);
+    expect(
+      mocks.requests.filter(({ action }) => action === 'generate'),
+    ).toHaveLength(2);
+  });
+
+  it('tracks an active generation until its worker response arrives', async () => {
+    let respond: (() => void) | undefined;
+    mocks.onRequest = (worker, request) => {
+      if (request.action === 'generate') {
+        respond = () => {
+          worker.handlers.get('message')?.({
+            id: request.id,
+            action: request.action,
+            text: '0',
+          });
+        };
+        return;
+      }
+      queueMicrotask(() => {
+        worker.handlers.get('message')?.({
+          id: request.id,
+          action: request.action,
+        });
+      });
+    };
+
+    const generation = generateQwenText('Slow generation');
+    while (!respond) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(isQwenGenerationInProgress()).toBe(true);
+    respond?.();
+    await expect(generation).resolves.toBe('0');
+    mocks.onRequest = undefined;
+    expect(isQwenGenerationInProgress()).toBe(false);
+  });
+
+  it('disposes and terminates the worker on shutdown', async () => {
+    mocks.responses.push({}, {});
+    await initializeQwenModel();
+    const worker = mocks.workers[0];
+
     await closeQwenModel();
 
-    expect(mocks.dispose).toHaveBeenCalledOnce();
+    expect(mocks.requests.map(({ action }) => action)).toEqual([
+      'initialize',
+      'dispose',
+    ]);
+    expect(worker?.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('terminates the worker without waiting for an active generation', async () => {
+    mocks.onRequest = (worker, request) => {
+      if (request.action === 'generate') {
+        return;
+      }
+      queueMicrotask(() => {
+        worker.handlers.get('message')?.({
+          id: request.id,
+          action: request.action,
+        });
+      });
+    };
+
+    const generation = generateQwenText('Generation interrupted by shutdown');
+    while (!mocks.requests.some(({ action }) => action === 'generate')) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const worker = mocks.workers[0];
+    expect(isQwenGenerationInProgress()).toBe(true);
+
+    await closeQwenModel();
+    await expect(generation).rejects.toThrow('closed before completing');
+
+    expect(worker?.terminate).toHaveBeenCalledOnce();
+    expect(isQwenGenerationInProgress()).toBe(false);
   });
 });

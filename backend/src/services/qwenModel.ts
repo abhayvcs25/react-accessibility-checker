@@ -1,49 +1,38 @@
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  AutoProcessor,
-  Qwen3_5ForConditionalGeneration,
-} from '@huggingface/transformers';
+import { Worker } from 'node:worker_threads';
 
 export const QWEN_MODEL_ID = 'huggingworld/Qwen3.5-4B-ONNX';
 export const QWEN_MODEL_REVISION =
   '8e3760349b4480f1f1a0f2d2010e46c5863262f1';
 export const QWEN_MAX_NEW_TOKENS = 16;
 
-const LOCAL_MODEL_REQUIRED_FILES = [
-  'config.json',
-  'generation_config.json',
-  'preprocessor_config.json',
-  'tokenizer.json',
-  'tokenizer_config.json',
-  'onnx/decoder_model_merged_q4.onnx',
-  'onnx/decoder_model_merged_q4.onnx_data',
-  'onnx/decoder_model_merged_q4.onnx_data_1',
-  'onnx/embed_tokens_q4.onnx',
-  'onnx/embed_tokens_q4.onnx_data',
-  'onnx/vision_encoder_fp16.onnx',
-  'onnx/vision_encoder_fp16.onnx_data',
-] as const;
-
-type TransformersModule = typeof import('@huggingface/transformers');
-type Processor = Awaited<
-  ReturnType<TransformersModule['AutoProcessor']['from_pretrained']>
->;
-type QwenModel = Awaited<
-  ReturnType<
-    TransformersModule['Qwen3_5ForConditionalGeneration']['from_pretrained']
-  >
->;
-
-interface LoadedQwenModel {
-  processor: Processor;
-  model: QwenModel;
-  Tensor: TransformersModule['Tensor'];
+interface WorkerRequest {
+  id: number;
+  action: 'initialize' | 'generate' | 'dispose';
+  prompt?: string;
+  maxNewTokens?: number;
 }
 
-let modelPromise: Promise<LoadedQwenModel> | undefined;
+interface WorkerResponse {
+  id: number;
+  action: WorkerRequest['action'];
+  text?: string;
+  error?: string;
+}
+
+interface PendingRequest {
+  resolve: (value: string | undefined) => void;
+  reject: (error: Error) => void;
+}
+
+let worker: Worker | undefined;
+let workerReady = false;
+let generationActive = false;
+let nextRequestId = 0;
 let generationQueue: Promise<void> = Promise.resolve();
+let initializationPromise: Promise<void> | undefined;
+const pendingRequests = new Map<number, PendingRequest>();
 
 export function getQwenModelCacheDirectory(): string {
   const configuredPath = process.env.RAC_MODEL_CACHE_DIR?.trim();
@@ -57,115 +46,114 @@ export function getQwenModelCacheDirectory(): string {
     : join(homedir(), '.cache', 'react-accessibility-checker', 'models');
 }
 
-async function loadQwenModel(): Promise<LoadedQwenModel> {
-  const transformers = await import('@huggingface/transformers');
-  const cacheDirectory = getQwenModelCacheDirectory();
-  const localModelDirectory = join(
-    cacheDirectory,
-    QWEN_MODEL_ID,
-    QWEN_MODEL_REVISION,
-  );
-  const hasCompleteLocalSnapshot = LOCAL_MODEL_REQUIRED_FILES.every((file) =>
-    existsSync(join(localModelDirectory, file)),
-  );
-  const modelSource = hasCompleteLocalSnapshot
-    ? localModelDirectory
-    : QWEN_MODEL_ID;
-  const loadOptions =
-    hasCompleteLocalSnapshot
-      ? { local_files_only: true }
-      : {
-          revision: QWEN_MODEL_REVISION,
-          cache_dir: cacheDirectory,
-          local_files_only: process.env.RAC_MODEL_OFFLINE === '1',
-        };
-  const processor = await transformers.AutoProcessor.from_pretrained(
-    modelSource,
-    loadOptions,
-  );
-  const model = await transformers.Qwen3_5ForConditionalGeneration.from_pretrained(
-    modelSource,
-    {
-      ...loadOptions,
-      device: 'cpu',
-      dtype: {
-        embed_tokens: 'q4',
-        vision_encoder: 'fp16',
-        decoder_model_merged: 'q4',
-      },
-    },
-  );
-
-  return { processor, model, Tensor: transformers.Tensor };
+function resetWorker(instance: Worker, error: Error): void {
+  if (worker !== instance) {
+    return;
+  }
+  worker = undefined;
+  workerReady = false;
+  initializationPromise = undefined;
+  generationActive = false;
+  for (const request of pendingRequests.values()) {
+    request.reject(error);
+  }
+  pendingRequests.clear();
 }
 
-function getLoadedQwenModel(): Promise<LoadedQwenModel> {
-  if (!modelPromise) {
-    modelPromise = loadQwenModel().catch((error: unknown) => {
-      modelPromise = undefined;
-      throw error;
-    });
+function getWorker(): Worker {
+  if (worker) {
+    return worker;
   }
-  return modelPromise;
+
+  const isTypeScriptRuntime = import.meta.url.endsWith('.ts');
+  const workerUrl = new URL(
+    isTypeScriptRuntime ? './qwenModelWorker.ts' : './qwenModelWorker.js',
+    import.meta.url,
+  );
+  const instance = new Worker(
+    workerUrl,
+    isTypeScriptRuntime ? { execArgv: ['--import', 'tsx'] } : {},
+  );
+
+  instance.on('message', (response: WorkerResponse) => {
+    const request = pendingRequests.get(response.id);
+    if (!request) {
+      return;
+    }
+    pendingRequests.delete(response.id);
+
+    if (response.error) {
+      request.reject(new Error(response.error));
+    } else {
+      request.resolve(response.text);
+    }
+  });
+  instance.on('error', (error: Error) => resetWorker(instance, error));
+  instance.on('exit', (code) => {
+    if (worker === instance) {
+      resetWorker(
+        instance,
+        new Error(`Qwen worker exited unexpectedly with code ${code}.`),
+      );
+    }
+  });
+
+  worker = instance;
+  return instance;
+}
+
+function sendWorkerRequest(
+  action: WorkerRequest['action'],
+  payload: Omit<WorkerRequest, 'id' | 'action'> = {},
+): Promise<string | undefined> {
+  const instance = getWorker();
+  const id = ++nextRequestId;
+  const request: WorkerRequest = { id, action, ...payload };
+
+  return new Promise<string | undefined>((resolve, reject) => {
+    pendingRequests.set(id, { resolve, reject });
+    instance.postMessage(request);
+  });
 }
 
 export async function initializeQwenModel(): Promise<void> {
-  await getLoadedQwenModel();
-}
-
-async function generateText(
-  prompt: string,
-  maxNewTokens: number,
-): Promise<string> {
-  const { processor, model, Tensor } = await getLoadedQwenModel();
-  const conversation = [{ role: 'user', content: prompt }];
-  const chatTemplateOptions = {
-    add_generation_prompt: true,
-    tokenize: false,
-    enable_thinking: false,
-  };
-  const formattedPrompt = processor.apply_chat_template(
-    conversation,
-    chatTemplateOptions,
-  );
-  const inputs = await processor(formattedPrompt);
-  const inputIds = inputs.input_ids;
-  const inputTokenCount = inputIds.dims[inputIds.dims.length - 1];
-
-  if (!Number.isInteger(inputTokenCount)) {
-    throw new Error('Qwen tokenizer returned invalid input dimensions.');
+  if (workerReady) {
+    return;
+  }
+  if (!initializationPromise) {
+    initializationPromise = sendWorkerRequest('initialize')
+      .then(() => {
+        workerReady = true;
+      })
+      .catch((error: unknown) => {
+        initializationPromise = undefined;
+        throw error;
+      });
   }
 
-  const generated = await model.generate({
-    ...inputs,
-    max_new_tokens: maxNewTokens,
-    do_sample: false,
-  });
-
-  if (!(generated instanceof Tensor)) {
-    throw new Error('Qwen generation returned an unexpected output shape.');
-  }
-
-  const responseTokens = generated.slice(null, [inputTokenCount, null]);
-  const decoded = processor.batch_decode(responseTokens, {
-    skip_special_tokens: true,
-  });
-  const text = decoded[0]?.trim();
-
-  if (!text) {
-    throw new Error('Qwen generation returned empty output.');
-  }
-
-  return text;
+  await initializationPromise;
 }
 
 export function generateQwenText(
   prompt: string,
   maxNewTokens = QWEN_MAX_NEW_TOKENS,
 ): Promise<string> {
-  const result = generationQueue.then(() =>
-    generateText(prompt, maxNewTokens),
-  );
+  const result = generationQueue.then(async () => {
+    generationActive = true;
+    try {
+      await initializeQwenModel();
+      const text = await sendWorkerRequest('generate', {
+        prompt,
+        maxNewTokens,
+      });
+      if (typeof text !== 'string' || !text.trim()) {
+        throw new Error('Qwen worker returned empty output.');
+      }
+      return text;
+    } finally {
+      generationActive = false;
+    }
+  });
   generationQueue = result.then(
     () => undefined,
     () => undefined,
@@ -173,13 +161,30 @@ export function generateQwenText(
   return result;
 }
 
+export function isQwenGenerationInProgress(): boolean {
+  return generationActive;
+}
+
 export async function closeQwenModel(): Promise<void> {
-  await generationQueue;
-  if (!modelPromise) {
+  const instance = worker;
+  if (!instance) {
     return;
   }
 
-  const loadedModel = await modelPromise;
-  await loadedModel.model.dispose();
-  modelPromise = undefined;
+  if (workerReady && !generationActive) {
+    try {
+      await sendWorkerRequest('dispose');
+    } finally {
+      if (worker === instance) {
+        worker = undefined;
+        workerReady = false;
+        initializationPromise = undefined;
+        await instance.terminate();
+      }
+    }
+    return;
+  }
+
+  resetWorker(instance, new Error('Qwen worker closed before completing its request.'));
+  await instance.terminate();
 }

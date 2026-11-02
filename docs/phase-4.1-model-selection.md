@@ -16,8 +16,17 @@ The API assessment path is enabled automatically by the development entry point
 runtime entry points remain opt-in with `RAC_ENABLE_QWEN_ASSESSMENTS=1`. Up to
 10 eligible target/rule assessments are grouped into a single compact Qwen
 generation with a 16-token cap and remain separate from IBM findings. The
-previous, longer-output build took about 114 seconds for one warm CPU assessment;
-the optimized version is being re-measured against the one-minute target.
+API waits at most 40 seconds for Qwen, then returns IBM results and marks Qwen
+assessments not assessed. Before disabling Qwen's thinking mode, a live
+one-target probe completed in about 43 seconds (IBM: 2.7 seconds; Qwen wait: 40
+seconds); the timed-out inference later completed in its worker. After the
+change, the pinned-model JSON smoke test generated valid output in 56 seconds
+including model load, and the end-to-end contextual-assessment smoke test
+returned a schema-valid result within the 40-second inference budget after
+preload (79 seconds total including model load). These are local measurements,
+not latency guarantees. ONNX inference cannot be cancelled, so a timed-out
+generation may finish in the background; concurrent scans skip Qwen until it
+finishes.
 Human-reviewed benchmark results and deployment resource budgets remain
 outstanding, so this is not approval for production deployment. No other model
 was examined as part of this follow-up.

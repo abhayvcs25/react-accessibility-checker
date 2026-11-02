@@ -77,14 +77,20 @@ evidence gate fails. Qwen output is schema-validated and citations must refer
 to supplied records. Up to 10 eligible targets are sent in one compact Qwen
 request, which returns only one classification character per target and is
 capped at 16 generated tokens. Remaining eligible targets are explicitly
-marked not assessed. This reduces repeated calls and output generation. A
-previous, longer-output Qwen build took about 114 seconds for one warm CPU
-assessment on this machine; the optimized build is being re-measured. Keep IBM
-as the fast report and treat Qwen feedback as a slower optional follow-up until
-the optimized timing is confirmed. These heuristics are not WCAG conformance findings and remain
-separate from IBM findings and summary counts. Keep production assessments
-disabled until human-reviewed benchmark and deployment-resource reviews are
-complete.
+marked not assessed. Before disabling Qwen's thinking mode, a live one-target
+probe completed in about 43 seconds: IBM took 2.7 seconds and the Qwen wait
+ended at its 40-second budget; inference continued in the worker afterward.
+With thinking disabled, the pinned-model JSON smoke test generated valid output
+in 56 seconds including model load, and the end-to-end contextual-assessment
+smoke test returned a schema-valid result within the 40-second inference
+budget after preload (79 seconds total including model load). These are local
+measurements, not guarantees. The native inference cannot be cancelled and may
+continue in the background; the terminal logs its eventual result, and new
+requests skip Qwen while that run is still active. Keep IBM as the dependable
+report and treat Qwen feedback as an optional follow-up. These heuristics are
+not WCAG conformance findings and remain separate from IBM findings and summary
+counts. Keep production assessments disabled until human-reviewed benchmark
+and deployment-resource reviews are complete.
 
 The local smoke test validates pinned model loading and bounded JSON text
 generation only; it is not an accessibility-accuracy evaluation. A Qwen

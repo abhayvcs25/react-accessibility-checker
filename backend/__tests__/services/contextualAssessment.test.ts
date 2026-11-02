@@ -3,15 +3,17 @@ import { adaptContextSnapshotV2 } from '../../src/services/contextAdapterV2.js';
 import { assessAdaptedContext } from '../../src/services/contextualAssessment.js';
 import { extractHtmlContextResultV2 } from '../../src/services/contextExtractionV2.js';
 
-const { generateQwenText } = vi.hoisted(() => ({
+const { generateQwenText, isQwenGenerationInProgress } = vi.hoisted(() => ({
   generateQwenText: vi.fn(),
+  isQwenGenerationInProgress: vi.fn(),
 }));
 
 vi.mock('../../src/services/qwenModel.js', () => ({
   QWEN_MODEL_ID: 'huggingworld/Qwen3.5-4B-ONNX',
   QWEN_MODEL_REVISION: '8e3760349b4480f1f1a0f2d2010e46c5863262f1',
-  QWEN_MAX_NEW_TOKENS: 96,
+  QWEN_MAX_NEW_TOKENS: 16,
   generateQwenText,
+  isQwenGenerationInProgress,
 }));
 
 function assess(html: string) {
@@ -31,9 +33,11 @@ describe('contextual assessment evidence gate', () => {
   beforeEach(() => {
     process.env.RAC_ENABLE_QWEN_ASSESSMENTS = '0';
     generateQwenText.mockReset();
+    isQwenGenerationInProgress.mockReset().mockReturnValue(false);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (previousFlag === undefined) {
       delete process.env.RAC_ENABLE_QWEN_ASSESSMENTS;
     } else {
@@ -147,7 +151,7 @@ describe('contextual assessment evidence gate', () => {
       },
     ]);
     expect(generateQwenText).toHaveBeenCalledOnce();
-    expect(generateQwenText.mock.calls[0]?.[0]).toContain('exactly 1 characters');
+    expect(generateQwenText.mock.calls[0]?.[0]).toContain('Return exactly 1 codes');
   });
 
   it('keeps description evidence out of the naming review prompt', async () => {
@@ -239,6 +243,44 @@ describe('contextual assessment evidence gate', () => {
     } finally {
       logError.mockRestore();
     }
+  });
+
+  it('returns an IBM-safe not-assessed report when Qwen exceeds its time budget', async () => {
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.env.RAC_ENABLE_QWEN_ASSESSMENTS = '1';
+    vi.useFakeTimers();
+    generateQwenText.mockReturnValue(new Promise<string>(() => {}));
+
+    try {
+      const reportPromise = assess('<button>Continue</button>');
+      await vi.advanceTimersByTimeAsync(40_000);
+      const report = await reportPromise;
+
+      expect(report.inferenceStatus).toBe('timed_out');
+      expect(report.errorCode).toBe('qwen-response-time-budget-exceeded');
+      expect(report.assessments[0]).toMatchObject({
+        assessment: 'not_assessed',
+        uncertainty: ['qwen-response-time-budget-exceeded'],
+      });
+      expect(logError).toHaveBeenCalledOnce();
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it('does not queue another model generation while a timed-out run is still active', async () => {
+    process.env.RAC_ENABLE_QWEN_ASSESSMENTS = '1';
+    isQwenGenerationInProgress.mockReturnValue(true);
+
+    const report = await assess('<button>Continue</button>');
+
+    expect(report.inferenceStatus).toBe('busy');
+    expect(report.errorCode).toBe('qwen-inference-in-progress');
+    expect(report.assessments[0]).toMatchObject({
+      assessment: 'not_assessed',
+      uncertainty: ['qwen-inference-in-progress'],
+    });
+    expect(generateQwenText).not.toHaveBeenCalled();
   });
 
   it('logs compact extracted context and Qwen output only when logging is enabled', async () => {

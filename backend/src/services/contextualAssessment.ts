@@ -14,9 +14,11 @@ import type {
 import {
   QWEN_MODEL_ID,
   QWEN_MODEL_REVISION,
+  isQwenGenerationInProgress,
 } from './qwenModel.js';
 import {
   assessUnitsWithQwen,
+  QwenAssessmentTimeoutError,
   type QwenAssessmentWorkItem,
 } from './qwenAssessment.js';
 
@@ -287,7 +289,7 @@ function makeAbstention(
     evidence: toEvidenceRecords(unit, ruleId),
     explanation:
       assessment === 'not_assessed'
-        ? 'No model assessment was produced. Qwen may be disabled or inference may have failed.'
+        ? 'No Qwen assessment was produced; see uncertainty for the reason.'
         : 'No accessibility conclusion was made. This experimental review requires complete authored naming text and supporting context.',
     confidence: null,
     uncertainty,
@@ -379,6 +381,8 @@ export async function assessAdaptedContext(
   let generatedCount = 0;
   let limitReached = false;
   let inferenceFailed = false;
+  let inferenceTimedOut = false;
+  let inferenceBusy = false;
 
   const eligibleWork: Array<QwenAssessmentWorkItem & { workIndex: number }> = [];
   for (const [workIndex, { ruleId, unit }] of work.entries()) {
@@ -421,34 +425,56 @@ export async function assessAdaptedContext(
   }
 
   if (enabled && eligibleWork.length > 0) {
-    try {
-      const generatedAssessments = await assessUnitsWithQwen(
-        eligibleWork.map(({ ruleId, unit }) => ({ ruleId, unit })),
-      );
-      generatedAssessments.forEach((assessment, index) => {
-        const workItem = eligibleWork[index];
-        if (workItem) {
-          assessmentByWorkIndex.set(workItem.workIndex, assessment);
-        }
-      });
-      generatedCount = eligibleWork.length;
-    } catch (error) {
-      inferenceFailed = true;
-      console.error(
-        'Qwen contextual assessment failed; IBM accessibility results are unaffected.',
-        error instanceof Error ? error.message : 'Unknown Qwen error',
-      );
+    if (isQwenGenerationInProgress()) {
+      inferenceBusy = true;
       eligibleWork.forEach(({ ruleId, unit, workIndex }) => {
         assessmentByWorkIndex.set(
           workIndex,
           makeAbstention(
             ruleId,
             unit,
-            ['qwen-inference-failed'],
+            ['qwen-inference-in-progress'],
             'not_assessed',
           ),
         );
       });
+    } else {
+      try {
+        const generatedAssessments = await assessUnitsWithQwen(
+          eligibleWork.map(({ ruleId, unit }) => ({ ruleId, unit })),
+        );
+        generatedAssessments.forEach((assessment, index) => {
+          const workItem = eligibleWork[index];
+          if (workItem) {
+            assessmentByWorkIndex.set(workItem.workIndex, assessment);
+          }
+        });
+        generatedCount = eligibleWork.length;
+      } catch (error) {
+        inferenceTimedOut = error instanceof QwenAssessmentTimeoutError;
+        inferenceFailed = !inferenceTimedOut;
+        console.error(
+          inferenceTimedOut
+            ? 'Qwen exceeded the response time budget; returning IBM results without waiting for it.'
+            : 'Qwen contextual assessment failed; IBM accessibility results are unaffected.',
+          error instanceof Error ? error.message : 'Unknown Qwen error',
+        );
+        eligibleWork.forEach(({ ruleId, unit, workIndex }) => {
+          assessmentByWorkIndex.set(
+            workIndex,
+            makeAbstention(
+              ruleId,
+              unit,
+              [
+                inferenceTimedOut
+                  ? 'qwen-response-time-budget-exceeded'
+                  : 'qwen-inference-failed',
+              ],
+              'not_assessed',
+            ),
+          );
+        });
+      }
     }
   }
 
@@ -460,6 +486,10 @@ export async function assessAdaptedContext(
   let inferenceStatus: ContextualInferenceStatus
   if (inferenceFailed) {
     inferenceStatus = 'failed'
+  } else if (inferenceTimedOut) {
+    inferenceStatus = 'timed_out'
+  } else if (inferenceBusy) {
+    inferenceStatus = 'busy'
   } else if (limitReached) {
     inferenceStatus = 'completed_with_limit'
   } else if (generatedCount > 0) {
@@ -476,6 +506,12 @@ export async function assessAdaptedContext(
     inferenceStatus,
     modelLoaded: generatedCount > 0,
     assessments,
-    ...(inferenceFailed ? { errorCode: 'qwen-inference-failed' } : {}),
+    ...(inferenceFailed
+      ? { errorCode: 'qwen-inference-failed' }
+      : inferenceTimedOut
+        ? { errorCode: 'qwen-response-time-budget-exceeded' }
+        : inferenceBusy
+          ? { errorCode: 'qwen-inference-in-progress' }
+          : {}),
   };
 }
