@@ -4,6 +4,7 @@ import express from 'express';
 import { MAX_BODY_SIZE, PORT } from './config.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import analyzeRouter from './routes/analyze.js';
+import aiRouter from './routes/ai.js';
 import { closeChecker } from './services/checker.js';
 
 const app = express();
@@ -11,11 +12,12 @@ const app = express();
 app.use(
   cors({
     origin: 'http://localhost:5173',
-    methods: ['POST', 'OPTIONS'],
+    methods: ['GET', 'POST', 'OPTIONS'],
   }),
 );
 app.use(express.json({ limit: MAX_BODY_SIZE }));
 app.use(analyzeRouter);
+app.use(aiRouter);
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });

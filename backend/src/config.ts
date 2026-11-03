@@ -1,3 +1,5 @@
+import './env.js';
+
 export const PORT = parseInt(process.env['PORT'] ?? '3001', 10);
 
 /**

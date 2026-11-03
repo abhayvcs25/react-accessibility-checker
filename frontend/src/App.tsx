@@ -32,7 +32,7 @@ type ContextualAssessment = {
   explanation: string
   confidence: number | null
   uncertainty: string[]
-  source: 'evidence_gate' | 'qwen3.5-4b'
+  source: 'evidence_gate' | 'qwen3.5-4b' | 'remote_ai'
 }
 
 type ContextualAssessmentReport = {
@@ -129,7 +129,7 @@ function isContextualAssessment(value: unknown): value is ContextualAssessment {
         Number.isFinite(value.confidence))) &&
     Array.isArray(value.uncertainty) &&
     value.uncertainty.every((item) => typeof item === 'string') &&
-    ['evidence_gate', 'qwen3.5-4b'].includes(String(value.source))
+    ['evidence_gate', 'qwen3.5-4b', 'remote_ai'].includes(String(value.source))
   )
 }
 
@@ -205,6 +205,9 @@ function getAssessmentSourceLabel(assessment: ContextualAssessment): string {
   if (assessment.source === 'qwen3.5-4b') {
     return 'Qwen3.5-4B local model'
   }
+  if (assessment.source === 'remote_ai') {
+    return 'Remote AI provider'
+  }
   return assessment.assessment === 'not_assessed'
     ? 'Not assessed by model'
     : 'Evidence gate'
@@ -219,19 +222,19 @@ function getInferenceStatusMessage(
     case 'not_invoked_no_targets':
       return 'No targets matched the current contextual-assessment pilot checks.'
     case 'not_invoked_disabled':
-      return 'Experimental Qwen assessment is disabled. IBM findings remain unaffected.'
+      return 'Contextual AI assessment is disabled. IBM findings remain unaffected.'
     case 'unavailable':
       return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
     case 'failed':
-      return 'Local contextual inference failed. IBM findings remain unaffected.'
+      return 'Contextual inference failed. IBM findings remain unaffected.'
     case 'timed_out':
-      return 'Qwen exceeded its 40-second response budget. IBM findings are returned; this target was not assessed by Qwen.'
+      return `${report.modelId} exceeded its response budget. IBM findings are returned; the target was not assessed.`
     case 'busy':
-      return 'A previous Qwen inference is still running. IBM findings are returned without waiting for another inference.'
+      return 'A previous model inference is still running. IBM findings are returned without waiting for another inference.'
     case 'completed':
-      return 'Qwen returned experimental authored-name wording feedback. This is not a WCAG or IBM finding.'
+      return `${report.modelId} returned advisory authored-name feedback. This is not a WCAG or IBM finding.`
     case 'completed_with_limit':
-      return 'Qwen reached the 10-call per-document limit. Remaining eligible targets were not assessed.'
+      return `${report.modelId} or the configured usage budget reached a per-document limit. Remaining eligible targets were not assessed.`
   }
 }
 
@@ -703,7 +706,7 @@ function App() {
                 Advisory contextual output is separate from IBM findings and
                 summary counts. Model: {report.contextualAssessments.modelId}
                 {' · '}Revision: {report.contextualAssessments.modelRevision}
-                {' · '}Loaded:{' '}
+                {' · '}Inference produced results:{' '}
                 {report.contextualAssessments.modelLoaded ? 'yes' : 'no'}
               </p>
               <p className="contextual-status" role="status">

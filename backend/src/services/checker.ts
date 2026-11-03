@@ -5,6 +5,7 @@ import type { ContextAdapterResult } from '../types/contextV2.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
 import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
 import { assessAdaptedContext } from './contextualAssessment.js'
+import { recordAnalysisDuration } from '../ai/usage.js'
 import {
   closeQwenModel,
   QWEN_MODEL_ID,
@@ -203,11 +204,19 @@ export function analyzeHtml(
 
     const contextualAssessments =
       await getContextualAssessments(contextAdapter)
+    const totalElapsedMilliseconds = Math.round(
+      performance.now() - analysisStartedAt,
+    )
+    if (process.env.RAC_AI_ENABLED === '1') {
+      try {
+        recordAnalysisDuration(totalElapsedMilliseconds)
+      } catch (error) {
+        console.error('Failed to persist AI analysis-duration metrics.', error)
+      }
+    }
     logAnalysis('analysis completed', {
       filename,
-      totalElapsedMilliseconds: Math.round(
-        performance.now() - analysisStartedAt,
-      ),
+      totalElapsedMilliseconds,
       contextualStatus: contextualAssessments.inferenceStatus,
       contextualAssessmentCount: contextualAssessments.assessments.length,
     })

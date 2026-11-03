@@ -39,7 +39,7 @@ function isResolvedNamingRelationship(
   );
 }
 
-function getNamingEvidence(
+export function getNamingEvidence(
   unit: TargetContextInputUnit,
 ): ContextualAssessmentEvidence[] {
   const evidenceById = new Map(

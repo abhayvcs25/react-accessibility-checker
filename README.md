@@ -117,6 +117,9 @@ ready for deployment.
 
 ## Local development
 
+For provider research, API-key setup, cost controls, and remote-model
+configuration, see [AI provider setup](docs/AI_PROVIDER_SETUP.md).
+
 Run these commands from the project root:
 
 ```sh

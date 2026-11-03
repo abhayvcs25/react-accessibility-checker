@@ -7,6 +7,8 @@
     "dev": "tsx watch src/dev.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "ai:test-connection": "tsx src/ai/testConnection.ts",
+    "benchmark:ai": "tsx src/ai/benchmark.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
