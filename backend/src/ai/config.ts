@@ -8,7 +8,6 @@ export const AI_PROVIDERS = {
     endpoint: 'https://generativelanguage.googleapis.com/v1beta',
     localRpmCap: 5,
     localTpmCap: 20_000,
-    localDailyRequestCap: 50,
     api: 'gemini',
   },
   openrouter: {
@@ -16,7 +15,6 @@ export const AI_PROVIDERS = {
     endpoint: 'https://openrouter.ai/api/v1',
     localRpmCap: 20,
     localTpmCap: 20_000,
-    localDailyRequestCap: 50,
     api: 'openai-compatible',
   },
 } as const;
@@ -108,18 +106,6 @@ function positiveInteger(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
-const warningThresholdValue =
-  process.env.RAC_AI_BUDGET_WARNING_RATIO === undefined
-    ? 0.8
-    : Number(process.env.RAC_AI_BUDGET_WARNING_RATIO);
-if (
-  !Number.isFinite(warningThresholdValue) ||
-  warningThresholdValue <= 0 ||
-  warningThresholdValue >= 1
-) {
-  throw new Error('RAC_AI_BUDGET_WARNING_RATIO must be greater than 0 and less than 1.');
-}
-
 export const aiRuntimeConfig = {
   concurrency: Math.min(10, positiveInteger(process.env.RAC_AI_CONCURRENCY, 2)),
   requestsPerMinute: positiveInteger(
@@ -130,20 +116,10 @@ export const aiRuntimeConfig = {
     process.env.RAC_AI_TOKENS_PER_MINUTE,
     20_000,
   ),
-  dailyTokenBudget: positiveInteger(
-    process.env.RAC_AI_DAILY_TOKEN_BUDGET,
-    250_000,
-  ),
-  dailyRequestBudget: positiveInteger(
-    process.env.RAC_AI_DAILY_REQUEST_BUDGET,
-    50,
-  ),
-  warningThreshold: warningThresholdValue,
   maxOutputTokens: Math.min(
     512,
-    positiveInteger(process.env.RAC_AI_MAX_OUTPUT_TOKENS, 192),
+    positiveInteger(process.env.RAC_AI_MAX_OUTPUT_TOKENS, 512),
   ),
-  timeoutMs: positiveInteger(process.env.RAC_AI_TIMEOUT_MS, 30_000),
   maxRetries: Math.min(4, positiveInteger(process.env.RAC_AI_MAX_RETRIES, 2)),
   cacheTtlMs: positiveInteger(
     process.env.RAC_AI_CACHE_TTL_MS,

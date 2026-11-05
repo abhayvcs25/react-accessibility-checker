@@ -167,6 +167,9 @@ export interface ContextualAssessment {
   ruleId: ContextualAssessmentRuleId;
   targetId: string;
   assessment: ContextualAssessmentValue;
+  statusCode?: 'remote-ai-inference-failed';
+  rule?: ContextualAssessmentRuleId;
+  status?: 'Not assessed';
   evidence: ContextualAssessmentEvidence[];
   explanation: string;
   confidence: number | null;

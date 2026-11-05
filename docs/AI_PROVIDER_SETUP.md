@@ -54,13 +54,20 @@ are not treated as free. OpenRouter free variants are used only with exact
 - Google Gemini API key: [Google AI Studio API keys](https://aistudio.google.com/api-keys).
 - OpenRouter key: [OpenRouter API keys](https://openrouter.ai/settings/keys).
 
-From the repository root in PowerShell:
+From the repository root in PowerShell, copy the example and add the key for
+the selected provider to `backend/.env`:
 
 ```powershell
 Copy-Item .env.example backend\.env
 ```
 
-In `backend/.env`, add only the key for the chosen model provider:
+The example selects the online Gemini 3.8 Flash model by default. Keep
+`RAC_AI_ENABLED=1` to send eligible assessments to that model. To disable
+remote assessments, set it to `0`; the analyzer will not fall back to Qwen.
+The development entry point enables remote assessment by default when this
+setting is omitted.
+
+Add only the key for the chosen model provider:
 
 ```dotenv
 GEMINI_API_KEY=your-key-from-ai-studio
@@ -105,8 +112,7 @@ OpenRouter's `openrouter/free` dynamic router are deliberately not configured.
 Each request names its fixed free model, and the OpenRouter request explicitly
 sets `provider.allow_fallbacks` to false.
 
-Keep `RAC_AI_ENABLED=0` until the key is configured. To enable the selected
-remote model:
+After configuring the key, enable the selected remote model:
 
 ```dotenv
 RAC_AI_ENABLED=1
@@ -122,23 +128,42 @@ npm --prefix backend run dev
 
 | Setting | Default | Behavior |
 |---|---:|---|
-| `RAC_AI_CONCURRENCY` | `2` | In-flight worker ceiling, configurable up to 10. Enforced process-wide per provider across simultaneous analyses; two workers are a conservative setting for an 8 GB development machine. |
+| `RAC_AI_CONCURRENCY` | `2` | In-flight HTTP request ceiling, configurable up to 10 and enforced process-wide per provider. |
 | `RAC_AI_REQUESTS_PER_MINUTE` | `5` | Local request cap. OpenRouter's documented free limit is 20 RPM; Gemini's actual per-project limit is dynamic. Confirm project limits before raising. |
 | `RAC_AI_TOKENS_PER_MINUTE` | `20000` | Local cap; actual provider/project limits may be lower. |
-| `RAC_AI_DAILY_TOKEN_BUDGET` | `250000` | Local input-plus-output token ceiling per provider, shared among configured models for that provider. |
-| `RAC_AI_DAILY_REQUEST_BUDGET` | `50` | Local per-provider daily cap; OpenRouter's documented free limit is shared 50 RPD in the no-purchase bracket. |
-| `RAC_AI_BUDGET_WARNING_RATIO` | `0.8` | Logs a warning as configured local limits approach. |
-| `RAC_AI_MAX_OUTPUT_TOKENS` | `192` | Bounds assessment output size. |
-| `RAC_AI_TIMEOUT_MS` | `30000` | Request timeout. |
+| `RAC_AI_MAX_OUTPUT_TOKENS` | `512` | Maximum output allowance sent to the provider (capped at 512). |
 | `RAC_AI_MAX_RETRIES` | `2` | Bounded retries for transient errors; same exact model only. |
 | `RAC_AI_CACHE_TTL_MS` | `43200000` | In-memory response cache; evidence is not written to disk. |
 
+Every eligible candidate in an analysis is sent to the selected online model,
+and the API response waits for those requests to finish. There is no
+per-analysis candidate cap or model-request deadline. Provider errors,
+local per-minute request/token safeguards, and provider-enforced free-tier
+quotas still apply. The application does not impose a separate daily request or
+token ceiling; provider quota errors are reported only after the provider
+returns them. Legacy `RAC_AI_DAILY_REQUEST_BUDGET`,
+`RAC_AI_DAILY_TOKEN_BUDGET`, and `RAC_AI_BUDGET_WARNING_RATIO` settings are
+ignored.
+
 Usage includes input/output tokens, estimated cost (always zero for these
 verified free routes), requests per model, rate-limit responses, latency and
-analysis duration. The local ledger is stored outside the repository by
-default under `%LOCALAPPDATA%\ReactAccessibilityChecker\ai-usage.json`.
+analysis duration. Each HTTP retry counts as an individual request; provider
+token counts are recorded when available, with conservative estimates tracked
+separately when a response has no usage metadata. The local ledger is stored
+outside the repository by default under
+`%LOCALAPPDATA%\ReactAccessibilityChecker\ai-usage.json`.
+Its daily window changes at midnight Pacific time, matching Google's published
+Gemini requests-per-day reset boundary; the ledger is for reporting and does
+not block requests.
 Provider-side usage can include other clients sharing a key, so keep external
 usage within your zero-cost quota too.
+
+The backend runs a non-blocking startup check against the selected model only
+when `RAC_AI_ENABLED=1`. The check is not blocked by locally recorded daily
+usage. An unavailable AI provider does not prevent the IBM Equal Access
+analysis service from starting. `GET /api/ai/health` reports
+`connected`, `checking`, `unavailable`, or `disabled`; its HTTP status is 200
+only when the selected model connection has been validated.
 
 ## Connection test and benchmark
 

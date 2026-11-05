@@ -5,12 +5,8 @@ import type { ContextAdapterResult } from '../types/contextV2.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
 import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
 import { assessAdaptedContext } from './contextualAssessment.js'
+import { selectedModel, selectedProvider } from '../ai/config.js'
 import { recordAnalysisDuration } from '../ai/usage.js'
-import {
-  closeQwenModel,
-  QWEN_MODEL_ID,
-  QWEN_MODEL_REVISION,
-} from './qwenModel.js'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -78,8 +74,8 @@ async function getContextualAssessments(
       'Contextual assessment failed; IBM accessibility results are unaffected.',
     )
     return {
-      modelId: QWEN_MODEL_ID,
-      modelRevision: QWEN_MODEL_REVISION,
+      modelId: selectedModel.modelId,
+      modelRevision: `${selectedProvider}-managed`,
       inferenceStatus: 'failed',
       modelLoaded: false,
       assessments: [],
@@ -248,16 +244,7 @@ export function analyzeHtml(
 export function closeChecker(): Promise<void> {
   if (!closePromise) {
     closePromise = scanQueue.then(async () => {
-      const results = await Promise.allSettled([
-        aChecker.close(),
-        closeQwenModel(),
-      ])
-      const errors = results.flatMap((result) =>
-        result.status === 'rejected' ? [result.reason] : [],
-      )
-      if (errors.length > 0) {
-        throw new AggregateError(errors, 'Failed to close accessibility services.')
-      }
+      await aChecker.close()
     })
     scanQueue = closePromise.then(
       () => undefined,

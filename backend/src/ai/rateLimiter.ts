@@ -6,9 +6,9 @@ import {
   type AiProviderId,
 } from './config.js';
 import {
-  getProviderDailyRequestCount,
   getRecentRateUsage,
   recordApiAttemptStart,
+  type ApiAttemptHandle,
 } from './usage.js';
 
 const wait = (milliseconds: number) =>
@@ -21,23 +21,31 @@ export async function withProviderConcurrency<T>(
   provider: AiProviderId,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const active = activeRequests.get(provider) ?? 0;
-  if (active >= aiRuntimeConfig.concurrency) {
-    await new Promise<void>((resolve) => {
-      const waiters = concurrencyWaiters.get(provider) ?? [];
-      waiters.push(resolve);
-      concurrencyWaiters.set(provider, waiters);
-    });
-  }
-  activeRequests.set(provider, (activeRequests.get(provider) ?? 0) + 1);
+  await new Promise<void>((resolve) => {
+    const active = activeRequests.get(provider) ?? 0;
+    if (active < aiRuntimeConfig.concurrency) {
+      activeRequests.set(provider, active + 1);
+      resolve();
+      return;
+    }
+
+    const waiters = concurrencyWaiters.get(provider) ?? [];
+    waiters.push(resolve);
+    concurrencyWaiters.set(provider, waiters);
+  });
+
   try {
     return await operation();
   } finally {
-    activeRequests.set(provider, (activeRequests.get(provider) ?? 1) - 1);
     const waiters = concurrencyWaiters.get(provider);
     const next = waiters?.shift();
     if (next) {
       next();
+    } else {
+      activeRequests.set(
+        provider,
+        Math.max(0, (activeRequests.get(provider) ?? 1) - 1),
+      );
     }
   }
 }
@@ -45,7 +53,7 @@ export async function withProviderConcurrency<T>(
 export async function waitForProviderCapacity(
   modelId: AiModelId,
   estimatedTokens: number,
-): Promise<number> {
+): Promise<ApiAttemptHandle> {
   const provider = AI_MODELS[modelId].provider;
   const limits = AI_PROVIDERS[provider];
   const maxRequests = Math.min(
@@ -58,10 +66,6 @@ export async function waitForProviderCapacity(
     modelId === 'gemini-3.8-flash' || modelId === 'gemini-3.6-flash'
       ? 3_000_000
       : Number.POSITIVE_INFINITY,
-  );
-  const maxDailyRequests = Math.min(
-    aiRuntimeConfig.dailyRequestBudget,
-    limits.localDailyRequestCap,
   );
   if (estimatedTokens > maxTokens) {
     throw new Error('AI request exceeds the configured per-minute token limit.');
@@ -79,9 +83,6 @@ export async function waitForProviderCapacity(
   await previous;
   try {
     while (true) {
-      if (getProviderDailyRequestCount(provider) >= maxDailyRequests) {
-        throw new Error('AI daily free-tier request budget exhausted.');
-      }
       const now = Date.now();
       const usage = getRecentRateUsage(provider, now);
       if (

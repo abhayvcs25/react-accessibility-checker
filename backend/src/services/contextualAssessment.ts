@@ -12,16 +12,6 @@ import type {
   ContextualAssessmentRuleId,
 } from '../types/checker.js';
 import {
-  QWEN_MODEL_ID,
-  QWEN_MODEL_REVISION,
-  isQwenGenerationInProgress,
-} from './qwenModel.js';
-import {
-  assessUnitsWithQwen,
-  QwenAssessmentTimeoutError,
-  type QwenAssessmentWorkItem,
-} from './qwenAssessment.js';
-import {
   isProviderConfigured,
   remoteAiEnabled,
   selectedProvider,
@@ -31,7 +21,6 @@ import {
 import { assessUnitsWithRemoteAi } from './remoteAssessment.js';
 
 const NAMING_RELATIONSHIPS = new Set(['native-label', 'aria-labelledby']);
-const MAX_ASSESSMENTS_PER_ANALYSIS = 10;
 
 function logAnalysis(event: string, details: Record<string, unknown>): void {
   if (process.env.RAC_LOG_ANALYSIS === '1') {
@@ -289,15 +278,19 @@ function makeAbstention(
   unit: TargetContextInputUnit,
   uncertainty: string[],
   assessment: 'insufficient_context' | 'not_assessed' = 'insufficient_context',
+  statusCode?: 'remote-ai-inference-failed',
 ): ContextualAssessment {
   return {
     ruleId,
     targetId: unit.focal.id,
     assessment,
+    ...(statusCode
+      ? { statusCode, rule: ruleId, status: 'Not assessed' as const }
+      : {}),
     evidence: toEvidenceRecords(unit, ruleId),
     explanation:
       assessment === 'not_assessed'
-        ? 'No Qwen assessment was produced; see uncertainty for the reason.'
+        ? 'No remote model assessment was produced; see uncertainty for the reason.'
         : 'No accessibility conclusion was made. This experimental review requires complete authored naming text and supporting context.',
     confidence: null,
     uncertainty,
@@ -307,10 +300,8 @@ function makeAbstention(
 
 function unavailableReport(errorCode: string): ContextualAssessmentReport {
   return {
-    modelId: remoteAiEnabled ? selectedModel.modelId : QWEN_MODEL_ID,
-    modelRevision: remoteAiEnabled
-      ? `${selectedProvider}-managed`
-      : QWEN_MODEL_REVISION,
+    modelId: selectedModel.modelId,
+    modelRevision: `${selectedProvider}-managed`,
     inferenceStatus: 'unavailable',
     modelLoaded: false,
     assessments: [],
@@ -332,10 +323,8 @@ export async function assessAdaptedContext(
   }
   if (result.status === 'empty') {
     return {
-      modelId: remoteAiEnabled ? selectedModel.modelId : QWEN_MODEL_ID,
-      modelRevision: remoteAiEnabled
-        ? `${selectedProvider}-managed`
-        : QWEN_MODEL_REVISION,
+      modelId: selectedModel.modelId,
+      modelRevision: `${selectedProvider}-managed`,
       inferenceStatus: 'not_invoked_no_targets',
       modelLoaded: false,
       assessments: [],
@@ -353,7 +342,7 @@ export async function assessAdaptedContext(
         : result.input.document.title.status,
     targetCount: result.input.units.length,
     candidateCount: work.length,
-    targets: work.slice(0, MAX_ASSESSMENTS_PER_ANALYSIS).map(({ ruleId, unit }) => ({
+    targets: work.map(({ ruleId, unit }) => ({
       id: unit.focal.id,
       kind: unit.focal.kind,
       ruleId,
@@ -376,10 +365,8 @@ export async function assessAdaptedContext(
   });
   if (work.length === 0) {
     return {
-      modelId: remoteAiEnabled ? selectedModel.modelId : QWEN_MODEL_ID,
-      modelRevision: remoteAiEnabled
-        ? `${selectedProvider}-managed`
-        : QWEN_MODEL_REVISION,
+      modelId: selectedModel.modelId,
+      modelRevision: `${selectedProvider}-managed`,
       inferenceStatus:
         result.status === 'partial'
           ? 'not_invoked_insufficient_context'
@@ -389,20 +376,18 @@ export async function assessAdaptedContext(
     };
   }
 
-  const qwenEnabled =
-    !remoteAiEnabled && process.env.RAC_ENABLE_QWEN_ASSESSMENTS === '1';
-  const enabled = remoteAiEnabled || qwenEnabled;
   const assessmentByWorkIndex = new Map<number, ContextualAssessment>();
   let eligibleCount = 0;
   let generatedCount = 0;
-  let limitReached = false;
   let inferenceFailed = false;
-  let inferenceTimedOut = false;
-  let inferenceBusy = false;
   let inferenceUnavailable = false;
-  let budgetExceeded = false;
+  let providerQuotaExceeded = false;
 
-  const eligibleWork: Array<QwenAssessmentWorkItem & { workIndex: number }> = [];
+  const eligibleWork: Array<{
+    ruleId: ContextualAssessmentRuleId;
+    unit: TargetContextInputUnit;
+    workIndex: number;
+  }> = [];
   for (const [workIndex, { ruleId, unit }] of work.entries()) {
     const missing = getMissingPrerequisites(ruleId, unit, result);
     if (missing.length > 0) {
@@ -414,36 +399,19 @@ export async function assessAdaptedContext(
     }
 
     eligibleCount += 1;
-    if (!enabled) {
+    if (!remoteAiEnabled) {
       assessmentByWorkIndex.set(
         workIndex,
         makeAbstention(
           ruleId,
           unit,
-          ['experimental-model-disabled'],
+          ['remote-model-disabled'],
           'not_assessed',
         ),
       );
       continue;
     }
-    if (eligibleWork.length < MAX_ASSESSMENTS_PER_ANALYSIS) {
-      eligibleWork.push({ ruleId, unit, workIndex });
-    } else {
-      limitReached = true;
-      assessmentByWorkIndex.set(
-        workIndex,
-        makeAbstention(
-          ruleId,
-          unit,
-          [
-            qwenEnabled
-              ? 'per-document-qwen-target-limit-reached'
-              : 'per-document-assessment-limit-reached',
-          ],
-          'not_assessed',
-        ),
-      );
-    }
+    eligibleWork.push({ ruleId, unit, workIndex });
   }
 
   if (remoteAiEnabled && !isProviderConfigured(selectedProvider)) {
@@ -460,26 +428,45 @@ export async function assessAdaptedContext(
       );
     });
   } else if (remoteAiEnabled && eligibleWork.length > 0) {
-    const outcomes = await assessUnitsWithRemoteAi(
-      eligibleWork.map(({ ruleId, unit, workIndex }) => ({
-        ruleId,
-        unit,
-        workIndex,
-      })),
-    );
-    for (const outcome of outcomes) {
-      const workItem = eligibleWork.find(
-        ({ workIndex }) => workIndex === outcome.workIndex,
-      );
-      if (!workItem) {
+    for (const workItem of eligibleWork) {
+      if (providerQuotaExceeded) {
+        assessmentByWorkIndex.set(
+          workItem.workIndex,
+          makeAbstention(
+            workItem.ruleId,
+            workItem.unit,
+            ['provider-quota-exhausted'],
+            'not_assessed',
+          ),
+        );
         continue;
       }
-      if (outcome.assessment) {
+
+      let outcome: Awaited<
+        ReturnType<typeof assessUnitsWithRemoteAi>
+      >[number] | undefined;
+      try {
+        const outcomes = await assessUnitsWithRemoteAi([
+          {
+            ruleId: workItem.ruleId,
+            unit: workItem.unit,
+            workIndex: workItem.workIndex,
+          },
+        ]);
+        outcome = outcomes[0];
+      } catch (error) {
+        console.error(
+          `[ai] Contextual assessment failed for rule ${workItem.ruleId}.`,
+          error,
+        );
+      }
+
+      if (outcome?.assessment) {
         assessmentByWorkIndex.set(workItem.workIndex, outcome.assessment);
         generatedCount += 1;
       } else {
-        if (outcome.budgetExceeded) {
-          budgetExceeded = true;
+        if (outcome?.providerQuotaExceeded) {
+          providerQuotaExceeded = true;
         } else {
           inferenceFailed = true;
         }
@@ -489,66 +476,19 @@ export async function assessAdaptedContext(
             workItem.ruleId,
             workItem.unit,
             [
-              outcome.budgetExceeded
-                ? 'ai-daily-budget-exhausted'
+              outcome?.providerQuotaExceeded
+                ? 'provider-quota-exhausted'
                 : 'remote-ai-assessment-failed',
             ],
             'not_assessed',
+            outcome?.providerQuotaExceeded
+              ? undefined
+              : 'remote-ai-inference-failed',
           ),
         );
       }
-    }
-  } else if (qwenEnabled && eligibleWork.length > 0) {
-    if (isQwenGenerationInProgress()) {
-      inferenceBusy = true;
-      eligibleWork.forEach(({ ruleId, unit, workIndex }) => {
-        assessmentByWorkIndex.set(
-          workIndex,
-          makeAbstention(
-            ruleId,
-            unit,
-            ['qwen-inference-in-progress'],
-            'not_assessed',
-          ),
-        );
-      });
-    } else {
-      try {
-        const generatedAssessments = await assessUnitsWithQwen(
-          eligibleWork.map(({ ruleId, unit }) => ({ ruleId, unit })),
-        );
-        generatedAssessments.forEach((assessment, index) => {
-          const workItem = eligibleWork[index];
-          if (workItem) {
-            assessmentByWorkIndex.set(workItem.workIndex, assessment);
-          }
-        });
-        generatedCount = eligibleWork.length;
-      } catch (error) {
-        inferenceTimedOut = error instanceof QwenAssessmentTimeoutError;
-        inferenceFailed = !inferenceTimedOut;
-        console.error(
-          inferenceTimedOut
-            ? 'Qwen exceeded the response time budget; returning IBM results without waiting for it.'
-            : 'Qwen contextual assessment failed; IBM accessibility results are unaffected.',
-          error instanceof Error ? error.message : 'Unknown Qwen error',
-        );
-        eligibleWork.forEach(({ ruleId, unit, workIndex }) => {
-          assessmentByWorkIndex.set(
-            workIndex,
-            makeAbstention(
-              ruleId,
-              unit,
-              [
-                inferenceTimedOut
-                  ? 'qwen-response-time-budget-exceeded'
-                  : 'qwen-inference-failed',
-              ],
-              'not_assessed',
-            ),
-          );
-        });
-      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 250));
     }
   }
 
@@ -562,25 +502,19 @@ export async function assessAdaptedContext(
     inferenceStatus = 'unavailable'
   } else if (inferenceFailed) {
     inferenceStatus = 'failed'
-  } else if (inferenceTimedOut) {
-    inferenceStatus = 'timed_out'
-  } else if (inferenceBusy) {
-    inferenceStatus = 'busy'
-  } else if (limitReached || budgetExceeded) {
+  } else if (providerQuotaExceeded) {
     inferenceStatus = 'completed_with_limit'
   } else if (generatedCount > 0) {
     inferenceStatus = 'completed'
-  } else if (!enabled && eligibleCount > 0) {
+  } else if (!remoteAiEnabled && eligibleCount > 0) {
     inferenceStatus = 'not_invoked_disabled'
   } else {
     inferenceStatus = 'not_invoked_insufficient_context'
   }
 
   return {
-    modelId: remoteAiEnabled ? selectedModel.modelId : QWEN_MODEL_ID,
-    modelRevision: remoteAiEnabled
-      ? `${selectedProvider}-managed`
-      : QWEN_MODEL_REVISION,
+    modelId: selectedModel.modelId,
+    modelRevision: `${selectedProvider}-managed`,
     inferenceStatus,
     modelLoaded: generatedCount > 0,
     assessments,
@@ -591,13 +525,9 @@ export async function assessAdaptedContext(
             : 'paid-usage-opt-in-required',
         }
       : inferenceFailed
-        ? { errorCode: remoteAiEnabled ? 'remote-ai-inference-failed' : 'qwen-inference-failed' }
-        : inferenceTimedOut
-        ? { errorCode: 'qwen-response-time-budget-exceeded' }
-        : inferenceBusy
-          ? { errorCode: 'qwen-inference-in-progress' }
-          : budgetExceeded
-            ? { errorCode: 'ai-daily-budget-exhausted' }
+        ? { errorCode: 'remote-ai-inference-failed' }
+        : providerQuotaExceeded
+          ? { errorCode: 'provider-quota-exhausted' }
           : {}),
   };
 }

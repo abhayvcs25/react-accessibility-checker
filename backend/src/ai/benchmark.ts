@@ -1,19 +1,12 @@
 import {
   AI_MODELS,
-  aiRuntimeConfig,
   getProviderApiKey,
   type AiModelId,
 } from './config.js';
 import {
   generateProviderCompletion,
-  ProviderRequestError,
   type ProviderCompletion,
 } from './providerClient.js';
-import { waitForProviderCapacity } from './rateLimiter.js';
-import {
-  recordApiAttemptEnd,
-  reserveEstimatedUsage,
-} from './usage.js';
 
 const cases = [
   {
@@ -76,40 +69,15 @@ async function benchmarkModel(modelId: AiModelId) {
         evidence: testCase.evidence,
       }),
     ].join('\n');
-    const estimatedTokens =
-      Math.ceil(prompt.length / 3) + aiRuntimeConfig.maxOutputTokens;
-    const releaseReservation = reserveEstimatedUsage(
-      modelId,
-      estimatedTokens,
-    );
     try {
-      const startedAt = await waitForProviderCapacity(modelId, estimatedTokens);
-      let completion: ProviderCompletion;
-      try {
-        completion = await generateProviderCompletion(modelId, prompt);
-      } catch (error) {
-        const providerError =
-          error instanceof ProviderRequestError ? error : undefined;
-        const rateLimited = providerError?.statusCode === 429;
-        recordApiAttemptEnd(
-          modelId,
-          startedAt,
-          Date.now() - startedAt,
-          { inputTokens: 0, outputTokens: 0 },
-          rateLimited,
-        );
-        throw error;
-      }
-      const latencyMs = Date.now() - startedAt;
+      const requestStartedAt = Date.now();
+      const completion: ProviderCompletion = await generateProviderCompletion(
+        modelId,
+        prompt,
+      );
+      const latencyMs = Date.now() - requestStartedAt;
       const inputTokens = completion.inputTokens;
       const outputTokens = completion.outputTokens;
-      recordApiAttemptEnd(
-        modelId,
-        startedAt,
-        latencyMs,
-        { inputTokens, outputTokens },
-        false,
-      );
       let parsed: unknown;
       try {
         parsed = JSON.parse(completion.text);
@@ -139,8 +107,6 @@ async function benchmarkModel(modelId: AiModelId) {
         expected: testCase.expected,
         error: error instanceof Error ? error.message : 'Request was blocked.',
       });
-    } finally {
-      releaseReservation();
     }
   }
 

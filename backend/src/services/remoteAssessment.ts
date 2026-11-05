@@ -11,16 +11,7 @@ import {
 } from '../ai/config.js';
 import {
   generateProviderCompletion,
-  ProviderRequestError,
 } from '../ai/providerClient.js';
-import {
-  waitForProviderCapacity,
-  withProviderConcurrency,
-} from '../ai/rateLimiter.js';
-import {
-  recordApiAttemptEnd,
-  reserveEstimatedUsage,
-} from '../ai/usage.js';
 import { getNamingEvidence } from './qwenAssessment.js';
 
 export interface RemoteAssessmentWorkItem {
@@ -31,7 +22,7 @@ export interface RemoteAssessmentWorkItem {
 export interface RemoteAssessmentOutcome {
   assessment?: ContextualAssessment;
   error?: Error;
-  budgetExceeded?: boolean;
+  providerQuotaExceeded?: boolean;
 }
 
 interface CachedResult {
@@ -57,6 +48,28 @@ const ruleInstructions: Record<ContextualAssessmentRuleId, string> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+const remoteAssessmentValues = [
+  'potential_issue',
+  'no_issue_detected',
+  'insufficient_context',
+] as const;
+
+type RemoteAssessmentValue = (typeof remoteAssessmentValues)[number];
+
+function isValidAssessmentObject(
+  value: unknown,
+): value is { assessment: RemoteAssessmentValue; explanation: string } {
+  return (
+    isRecord(value) &&
+    remoteAssessmentValues.some(
+      (assessment) => assessment === value.assessment,
+    ) &&
+    typeof value.explanation === 'string' &&
+    Boolean(value.explanation.trim()) &&
+    value.explanation.length <= 500
+  );
 }
 
 function buildPrompt(
@@ -93,27 +106,80 @@ function buildPrompt(
 }
 
 function parseAssessment(text: string): CachedResult['assessment'] {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error('Remote model returned invalid JSON.');
+  const parsedObjects: unknown[] = [];
+  let malformedJson = false;
+
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{') {
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = start;
+
+    for (; end < text.length; end += 1) {
+      const character = text[end];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+      } else if (character === '{') {
+        depth += 1;
+      } else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          break;
+        }
+      }
+    }
+
+    if (depth !== 0) {
+      malformedJson = true;
+      continue;
+    }
+
+    try {
+      parsedObjects.push(JSON.parse(text.slice(start, end + 1)));
+      start = end;
+    } catch {
+      malformedJson = true;
+    }
   }
-  if (
-    !isRecord(value) ||
-    ![
-      'potential_issue',
-      'no_issue_detected',
-      'insufficient_context',
-    ].includes(String(value.assessment)) ||
-    typeof value.explanation !== 'string' ||
-    !value.explanation.trim() ||
-    value.explanation.length > 500
-  ) {
-    throw new Error('Remote model returned an invalid assessment object.');
+
+  const validAssessments = parsedObjects.filter(isValidAssessmentObject);
+
+  if (validAssessments.length !== 1) {
+    if (validAssessments.length > 1) {
+      throw new Error(
+        'Remote model returned multiple assessment objects; exactly one is required.',
+      );
+    }
+    if (parsedObjects.length > 0) {
+      throw new Error(
+        'Remote model returned an invalid assessment object; assessment and a non-empty explanation of at most 500 characters are required.',
+      );
+    }
+    throw new Error(
+      malformedJson
+        ? 'Remote model returned invalid JSON; no complete valid JSON object was found.'
+        : 'Remote model returned invalid JSON; no JSON object was found.',
+    );
   }
+
+  const value = validAssessments[0]!;
   return {
-    assessment: value.assessment as CachedResult['assessment']['assessment'],
+    assessment: value.assessment,
     explanation: value.explanation.trim(),
   };
 }
@@ -165,6 +231,7 @@ function setCachedResult(
 async function getOrCreateAssessment(
   hash: string,
   prompt: string,
+  ruleId: ContextualAssessmentRuleId,
 ): Promise<CachedResult['assessment']> {
   const cached = getCachedResult(hash);
   if (cached) {
@@ -176,74 +243,10 @@ async function getOrCreateAssessment(
   }
 
   const operation = (async () => {
-    const estimatedTokens =
-      Math.ceil(prompt.length / 3) + aiRuntimeConfig.maxOutputTokens;
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= aiRuntimeConfig.maxRetries; attempt += 1) {
-      const releaseReservation = reserveEstimatedUsage(
-        selectedModelId,
-        estimatedTokens,
-      );
-      try {
-        const startedAt = await waitForProviderCapacity(
-          selectedModelId,
-          estimatedTokens,
-        );
-        let completion;
-        try {
-          completion = await withProviderConcurrency(
-            selectedModel.provider,
-            () => generateProviderCompletion(selectedModelId, prompt),
-          );
-        } catch (error) {
-          const providerError =
-            error instanceof ProviderRequestError
-              ? error
-              : new ProviderRequestError(
-                  error instanceof Error ? error.message : 'Remote assessment failed.',
-                );
-          recordApiAttemptEnd(
-            selectedModelId,
-            startedAt,
-            Date.now() - startedAt,
-            providerError.statusCode === 429
-              ? { inputTokens: 0, outputTokens: 0 }
-              : { inputTokens: 0, outputTokens: 0 },
-            providerError.statusCode === 429,
-          );
-          lastError = providerError;
-          if (!providerError.retryable || attempt === aiRuntimeConfig.maxRetries) {
-            break;
-          }
-          const delay =
-            providerError.retryAfterMs ??
-            Math.min(8_000, 300 * 2 ** attempt + Math.floor(Math.random() * 200));
-          if (delay > aiRuntimeConfig.timeoutMs) {
-            break;
-          }
-          await new Promise<void>((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-        recordApiAttemptEnd(
-          selectedModelId,
-          startedAt,
-          Date.now() - startedAt,
-          {
-            inputTokens: completion.inputTokens,
-            outputTokens: completion.outputTokens,
-          },
-          false,
-        );
-        const parsed = parseAssessment(completion.text);
-        setCachedResult(hash, parsed);
-        return parsed;
-      } finally {
-        releaseReservation();
-      }
-    }
-    throw lastError instanceof Error
-      ? lastError
-      : new Error('Remote assessment failed after retries.');
+    const completion = await generateProviderCompletion(selectedModelId, prompt);
+    const parsed = parseAssessment(completion.text);
+    setCachedResult(hash, parsed);
+    return parsed;
   })();
 
   inFlight.set(hash, operation);
@@ -283,10 +286,10 @@ export async function assessUnitsWithRemoteAi(
     work,
     aiRuntimeConfig.concurrency,
     async ({ ruleId, unit, workIndex }) => {
-      const { prompt, evidence } = buildPrompt({ ruleId, unit });
-      const hash = getEvidenceHash({ ruleId, unit }, evidence);
       try {
-        const value = await getOrCreateAssessment(hash, prompt);
+        const { prompt, evidence } = buildPrompt({ ruleId, unit });
+        const hash = getEvidenceHash({ ruleId, unit }, evidence);
+        const value = await getOrCreateAssessment(hash, prompt, ruleId);
         return {
           workIndex,
           assessment: {
@@ -301,12 +304,16 @@ export async function assessUnitsWithRemoteAi(
           },
         };
       } catch (error) {
-        const isBudgetError =
+        const providerQuotaExceeded =
           error instanceof Error &&
-          (error.message.includes('daily free-tier') ||
-            error.message ===
-              'AI daily free-tier usage budget would be exceeded.');
-        if (!isBudgetError) {
+          'providerQuotaExceeded' in error &&
+          error.providerQuotaExceeded === true;
+        if (providerQuotaExceeded) {
+          console.warn(
+            `[ai] ${selectedModel.provider}/${selectedModelId} reported provider quota exhaustion for rule ${ruleId}.`,
+            error.message,
+          );
+        } else {
           console.error(
             `[ai] ${selectedModel.provider}/${selectedModelId} assessment failed for rule ${ruleId}.`,
             error,
@@ -318,7 +325,7 @@ export async function assessUnitsWithRemoteAi(
             error instanceof Error
               ? error
               : new Error('Remote assessment failed.'),
-          ...(isBudgetError ? { budgetExceeded: true } : {}),
+          ...(providerQuotaExceeded ? { providerQuotaExceeded: true } : {}),
         };
       }
     },

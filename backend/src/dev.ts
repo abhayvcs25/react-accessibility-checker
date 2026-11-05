@@ -1,10 +1,13 @@
 import './env.js';
+import {
+  AI_PROVIDERS,
+  isProviderConfigured,
+  selectedModel,
+  selectedProvider,
+} from './ai/config.js';
 
-if (
-  process.env.RAC_AI_ENABLED !== '1' &&
-  process.env.RAC_ENABLE_QWEN_ASSESSMENTS === undefined
-) {
-  process.env.RAC_ENABLE_QWEN_ASSESSMENTS = '1';
+if (process.env.RAC_AI_ENABLED === undefined) {
+  process.env.RAC_AI_ENABLED = '1';
 }
 if (process.env.RAC_LOG_ANALYSIS === undefined) {
   process.env.RAC_LOG_ANALYSIS = '1';
@@ -12,25 +15,15 @@ if (process.env.RAC_LOG_ANALYSIS === undefined) {
 
 await import('./index.js');
 
-if (process.env.RAC_AI_ENABLED !== '1') {
-  const { initializeQwenModel, QWEN_MODEL_ID, QWEN_MODEL_REVISION } =
-    await import('./services/qwenModel.js');
-
+if (process.env.RAC_AI_ENABLED === '1') {
   console.log(
-    `Loading local Qwen model ${QWEN_MODEL_ID} at revision ${QWEN_MODEL_REVISION}...`,
+    `Online contextual assessment is enabled with ${selectedModel.modelId}.`,
   );
-  void initializeQwenModel()
-    .then(() => {
-      console.log('Local Qwen model is ready for contextual assessments.');
-    })
-    .catch((error: unknown) => {
-      console.error(
-        'Local Qwen model failed to load. IBM accessibility analysis remains available; check model cache/network settings before retrying.',
-        error,
-      );
-    });
+  if (!isProviderConfigured(selectedProvider)) {
+    console.error(
+      `Missing ${AI_PROVIDERS[selectedProvider].keyEnv}. Set it in backend/.env or the repository-root .env, then restart the backend.`,
+    );
+  }
 } else {
-  console.log(
-    'Remote AI is selected. Qwen remains available by setting RAC_AI_ENABLED=0 and RAC_ENABLE_QWEN_ASSESSMENTS=1.',
-  );
+  console.log('Online contextual assessment is disabled; Qwen is not used.');
 }

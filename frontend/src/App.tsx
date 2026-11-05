@@ -234,7 +234,7 @@ function getInferenceStatusMessage(
     case 'completed':
       return `${report.modelId} returned advisory authored-name feedback. This is not a WCAG or IBM finding.`
     case 'completed_with_limit':
-      return `${report.modelId} or the configured usage budget reached a per-document limit. Remaining eligible targets were not assessed.`
+      return `${report.modelId} reported a provider quota or rate limit. Remaining eligible targets were not assessed.`
   }
 }
 

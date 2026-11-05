@@ -11,15 +11,7 @@ import type {
 import { QWEN_MAX_NEW_TOKENS, generateQwenText } from './qwenModel.js';
 
 const MAX_EVIDENCE_TEXT_LENGTH = 100;
-export const QWEN_ASSESSMENT_TIMEOUT_MS = 40_000;
 const NAMING_RELATIONSHIPS = new Set(['native-label', 'aria-labelledby']);
-
-export class QwenAssessmentTimeoutError extends Error {
-  constructor() {
-    super('Qwen assessment exceeded the inference time budget.');
-    this.name = 'QwenAssessmentTimeoutError';
-  }
-}
 
 export interface QwenAssessmentWorkItem {
   ruleId: ContextualAssessmentRuleId;
@@ -127,41 +119,7 @@ export async function assessUnitsWithQwen(
   });
 
   try {
-    const generation = generateQwenText(prompt);
-    let timeoutId: NodeJS.Timeout | undefined;
-    const timedOut = Symbol('qwen-timeout');
-    const result = await Promise.race([
-      generation,
-      new Promise<typeof timedOut>((resolve) => {
-        timeoutId = setTimeout(
-          () => resolve(timedOut),
-          QWEN_ASSESSMENT_TIMEOUT_MS,
-        );
-      }),
-    ]);
-
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    if (result === timedOut) {
-      void generation.then(
-        (lateOutput) => {
-          logQwen('late output ready after report timeout', {
-            elapsedMilliseconds: Math.round(performance.now() - startedAt),
-            outputCodes: lateOutput.trim(),
-          });
-        },
-        (error: unknown) => {
-          logQwen('late generation failed after report timeout', {
-            elapsedMilliseconds: Math.round(performance.now() - startedAt),
-            message: error instanceof Error ? error.message : 'Unknown Qwen error',
-          });
-        },
-      );
-      throw new QwenAssessmentTimeoutError();
-    }
-
-    const outputText = result;
+    const outputText = await generateQwenText(prompt);
     const codes = outputText.trim().replace(/\s/g, '');
     if (
       codes.length !== work.length ||
