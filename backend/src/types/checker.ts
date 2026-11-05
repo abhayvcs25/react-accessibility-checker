@@ -174,7 +174,7 @@ export interface ContextualAssessment {
   explanation: string;
   confidence: number | null;
   uncertainty: string[];
-  source: 'evidence_gate' | 'qwen3.5-4b' | 'remote_ai';
+  source: 'evidence_gate';
 }
 
 export type ContextualInferenceStatus =

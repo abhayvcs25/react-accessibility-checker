@@ -8,11 +8,6 @@ import {
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import {
-  AI_MODELS,
-  type AiModelId,
-  type AiProviderId,
-} from './config.js';
 
 interface ApiAttempt {
   id: string;
@@ -33,7 +28,7 @@ interface ModelUsage {
   outputTokens: number;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
-  estimatedCostUsd: number;
+  estimatedCostUsd: number | null;
   rateLimitResponses: number;
   requestLatenciesMs: number[];
   attempts: ApiAttempt[];
@@ -99,6 +94,10 @@ function loadDatabase(): UsageDatabase {
         }
         value.estimatedInputTokens ??= 0;
         value.estimatedOutputTokens ??= 0;
+        if (value.estimatedCostUsd === 0) {
+          value.estimatedCostUsd = null;
+        }
+        value.estimatedCostUsd ??= null;
         if (Array.isArray(value.attempts)) {
           for (const attempt of value.attempts) {
             if (!isRecord(attempt)) {
@@ -160,7 +159,7 @@ function getToday(create = true): DailyUsage | undefined {
   return today;
 }
 
-function emptyModelUsage(modelId: AiModelId): ModelUsage {
+function emptyModelUsage(modelId: string): ModelUsage {
   return {
     modelId,
     requests: 0,
@@ -168,7 +167,7 @@ function emptyModelUsage(modelId: AiModelId): ModelUsage {
     outputTokens: 0,
     estimatedInputTokens: 0,
     estimatedOutputTokens: 0,
-    estimatedCostUsd: 0,
+    estimatedCostUsd: null,
     rateLimitResponses: 0,
     requestLatenciesMs: [],
     attempts: [],
@@ -176,7 +175,7 @@ function emptyModelUsage(modelId: AiModelId): ModelUsage {
 }
 
 function getModelUsage(
-  modelId: AiModelId,
+  modelId: string,
   create = true,
 ): ModelUsage | undefined {
   const today = getToday(create);
@@ -191,40 +190,12 @@ function getModelUsage(
   return usage;
 }
 
-export function getDailyUsage(modelId: AiModelId): ModelUsage {
+export function getDailyUsage(modelId: string): ModelUsage {
   return getModelUsage(modelId, false) ?? emptyModelUsage(modelId);
 }
 
-function getProviderModelUsage(provider: AiProviderId): ModelUsage[] {
-  const entries = Object.values(getToday(false)?.providers ?? {});
-  return entries.filter((usage) =>
-    Object.values(AI_MODELS).some(
-      (model) =>
-        model.modelId === usage.modelId && model.provider === provider,
-    ),
-  );
-}
-
-export function getRecentRateUsage(
-  provider: AiProviderId,
-  now = Date.now(),
-): { requests: number; tokens: number; oldestAt?: number } {
-  const attempts = getProviderModelUsage(provider)
-    .flatMap((usage) => usage.attempts)
-    .filter(({ at }) => now - at < 60_000)
-    .sort((left, right) => left.at - right.at);
-  return {
-    requests: attempts.length,
-    tokens: attempts.reduce(
-      (total, attempt) => total + attempt.estimatedTokens,
-      0,
-    ),
-    ...(attempts[0] ? { oldestAt: attempts[0].at } : {}),
-  };
-}
-
 export function recordApiAttemptStart(
-  modelId: AiModelId,
+  modelId: string,
   estimatedTokens: number,
 ): ApiAttemptHandle {
   const attempt = { id: randomUUID(), at: Date.now() };
@@ -249,7 +220,7 @@ export function recordApiAttemptStart(
 }
 
 export function recordApiAttemptEnd(
-  modelId: AiModelId,
+  modelId: string,
   attemptHandle: ApiAttemptHandle,
   latencyMs: number,
   usageTokens: {
@@ -285,7 +256,6 @@ export function recordApiAttemptEnd(
   usage.outputTokens += usageTokens.outputTokens;
   usage.estimatedInputTokens += attempt.estimatedInputTokens;
   usage.estimatedOutputTokens += attempt.estimatedOutputTokens;
-  usage.estimatedCostUsd = 0;
   persistDatabase();
 }
 

@@ -32,7 +32,7 @@ type ContextualAssessment = {
   explanation: string
   confidence: number | null
   uncertainty: string[]
-  source: 'evidence_gate' | 'qwen3.5-4b' | 'remote_ai'
+  source: 'evidence_gate'
 }
 
 type ContextualAssessmentReport = {
@@ -129,7 +129,7 @@ function isContextualAssessment(value: unknown): value is ContextualAssessment {
         Number.isFinite(value.confidence))) &&
     Array.isArray(value.uncertainty) &&
     value.uncertainty.every((item) => typeof item === 'string') &&
-    ['evidence_gate', 'qwen3.5-4b', 'remote_ai'].includes(String(value.source))
+    value.source === 'evidence_gate'
   )
 }
 
@@ -202,14 +202,14 @@ function getAssessmentLabel(assessment: ContextualAssessment['assessment']) {
 }
 
 function getAssessmentSourceLabel(assessment: ContextualAssessment): string {
-  if (assessment.source === 'qwen3.5-4b') {
-    return 'Qwen3.5-4B local model'
-  }
-  if (assessment.source === 'remote_ai') {
-    return 'Remote AI provider'
+  if (
+    assessment.assessment === 'not_assessed' &&
+    assessment.uncertainty.includes('provider-migration-pending')
+  ) {
+    return 'Provider migration pending'
   }
   return assessment.assessment === 'not_assessed'
-    ? 'Not assessed by model'
+    ? 'Not assessed'
     : 'Evidence gate'
 }
 
@@ -222,7 +222,7 @@ function getInferenceStatusMessage(
     case 'not_invoked_no_targets':
       return 'No targets matched the current contextual-assessment pilot checks.'
     case 'not_invoked_disabled':
-      return 'Contextual AI assessment is disabled. IBM findings remain unaffected.'
+      return 'Contextual AI provider migration is pending; no model requests are sent. IBM findings remain unaffected.'
     case 'unavailable':
       return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
     case 'failed':
@@ -704,9 +704,7 @@ function App() {
               </div>
               <p className="contextual-report-note">
                 Advisory contextual output is separate from IBM findings and
-                summary counts. Model: {report.contextualAssessments.modelId}
-                {' · '}Revision: {report.contextualAssessments.modelRevision}
-                {' · '}Inference produced results:{' '}
+                summary counts. Inference produced results:{' '}
                 {report.contextualAssessments.modelLoaded ? 'yes' : 'no'}
               </p>
               <p className="contextual-status" role="status">

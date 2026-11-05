@@ -1,0 +1,632 @@
+# Task: Replace Existing AI Assessment Implementation with a Six-Model Parallel Architecture
+
+You are working on my React Accessibility Checker project.
+
+Repository:
+`D:\react-accessibility-checker`
+
+Your task is to inspect the existing implementation and replace the current AI assessment implementation with the new six-model architecture described below.
+
+Follow the phases in order. Do not skip the audit or make assumptions about the existing code.
+
+**Today's scope: implementation and official documentation verification only. Tomorrow's scope: live model testing and end-to-end verification. Do not perform live inference tests today.**
+
+---
+
+# 1. Existing functionality that MUST NOT be changed
+
+The IBM Equal Access Checker is already implemented and working correctly.
+
+It is the authoritative rule-based accessibility checker.
+
+STRICT REQUIREMENTS:
+
+- Do not modify IBM checker logic.
+- Do not modify IBM rule execution.
+- Do not modify IBM findings, severity, or counts.
+- Do not change the existing IBM analysis pipeline.
+- Do not make IBM dependent on AI model availability.
+- Do not change the existing HTML extraction implementation unnecessarily.
+- Do not mix AI findings into IBM findings.
+
+AI assessments must remain advisory and separate from IBM findings.
+
+The existing Phase 3 context extraction implementation must be inspected and reused wherever appropriate.
+
+---
+
+# 2. New target architecture
+
+The intended architecture is:
+
+User submits a complete project or website URL
+        |
+        v
+Backend receives the project/URL
+        |
+        v
+Website and project content extraction
+        |
+        v
+IBM Equal Access Checker
+        |
+        v
+Six AI models assess contextual accessibility
+        |
+        v
+Result aggregation and validation
+        |
+        v
+Accessibility report generation
+        |
+        v
+Generate ONE consolidated fixing prompt
+        |
+        v
+User gives that prompt to their own AI coding model
+        |
+        v
+User's coding model fixes the project
+
+Current limitation:
+
+- HTML extraction is currently implemented.
+- React project extraction is not yet implemented.
+- React project and website-level extraction will be a future phase.
+- Do not pretend that the existing HTML extractor already supports complete React project analysis.
+
+Keep the architecture extensible for future React project extraction.
+
+---
+
+# 3. Selected six-model shortlist
+
+Use the following six candidates.
+
+## Provider A: Groq
+
+1. GPT-OSS-120B
+   - Candidate model ID: `openai/gpt-oss-120b`
+
+2. GPT-OSS-20B
+   - Candidate model ID: `openai/gpt-oss-20b`
+
+3. Qwen 3.8-27B
+   - Candidate model ID: `qwen/qwen3.8-27b`
+
+## Provider B: Cloudflare Workers AI
+
+4. GLM-4.7-Flash
+   - Candidate model ID: `@cf/zai-org/glm-4.7-flash`
+
+5. NVIDIA Nemotron 3 120B
+   - Candidate model ID: `@cf/nvidia/nemotron-3-120b-a12b`
+
+6. Gemma 4 26B A4B
+   - Candidate model ID: `@cf/google/gemma-4-26b-a4b-it`
+
+IMPORTANT:
+
+These are candidate names and IDs, not automatically approved integrations.
+
+Before implementing any provider or model:
+
+- Verify the exact model ID in the provider's official model catalogue.
+- Verify that the model is currently available through its API.
+- Verify its actual context window.
+- Verify its maximum output token limit.
+- Verify structured output/JSON Schema support.
+- Verify the current free-tier request limits.
+- Verify input and output token limits.
+- Verify concurrency and rate-limit restrictions.
+- Verify whether the model is available without purchasing credits.
+- Verify relevant data-retention and privacy documentation.
+
+Use official Groq, Cloudflare and model-provider documentation.
+
+Do not rely on third-party model lists, blog posts, or outdated examples as proof.
+
+If a candidate cannot be verified, do not silently substitute another model. Record the problem and recommend a replacement only after checking its official documentation.
+
+Budget is strictly ₹0.
+
+Never enable billing, use paid inference, or silently fall back to a paid model.
+
+---
+
+# 4. Direct API integration
+
+Use direct provider APIs rather than making OpenRouter a required dependency.
+
+Provider arrangement:
+
+- Groq: three models through its API.
+- Cloudflare Workers AI: three models through its API.
+
+Inspect the official API documentation for both providers.
+
+Create a clean provider abstraction so that:
+
+- Each provider has its own API client.
+- Each model has explicit configuration.
+- API keys are loaded securely from environment variables.
+- Provider-specific request formats are handled by their respective clients.
+- Provider-specific response formats are normalized into one internal assessment format.
+- Timeouts, rate limits, quota errors and incomplete responses are handled independently.
+
+Do not expose API keys to the frontend.
+
+Do not hardcode secrets.
+
+Do not introduce OpenRouter as a fallback.
+
+---
+
+# 5. Six-model parallel assessment architecture
+
+This is one of the most important requirements.
+
+The six models must be capable of working in parallel.
+
+The intended assessment workload is:
+
+- Approximately 10–20 React pages in the future.
+- Multiple components within those pages.
+- 20 contextual accessibility rules.
+- Each model receives relevant component context and the rules it must evaluate.
+- Each model returns a small structured assessment, not a long report.
+
+Do not send an entire website blindly to every model.
+
+Create bounded assessment jobs using the extracted context.
+
+The architecture must support distributing component-level assessment jobs across all six models.
+
+Do not assume that one HTTP request per website is sufficient.
+
+The scheduler must support:
+
+- Multiple batches.
+- Multiple components per website.
+- Rule-specific assessment jobs.
+- Six independently configured models.
+- Parallel execution.
+- Bounded concurrency.
+- Provider-specific concurrency controls.
+- Provider-specific rate-limit handling.
+- Token-budget management.
+- Retry policies.
+- Partial failures.
+
+Do not use unrestricted `Promise.all()` for hundreds of requests.
+
+Use a bounded worker/batch execution design.
+
+---
+
+# 6. Critical requirement: persistent batch and request tracking
+
+I do not want repeated accessibility checks.
+
+The system must remember exactly:
+
+- Which project or website was analysed.
+- Which project version or content snapshot was analysed.
+- Which batch was created.
+- Which model received each request.
+- Which provider handled the request.
+- Which component was being assessed.
+- Which accessibility rules were included.
+- What context/evidence was sent.
+- When the request was sent.
+- Whether it completed successfully.
+- Whether it failed.
+- Whether it was retried.
+- What response was received.
+- Whether the response passed validation.
+
+Design a persistent request and batch ledger.
+
+Inspect the existing database and persistence architecture before choosing where to store it.
+
+Do not introduce an unnecessary database or duplicate storage system.
+
+The ledger should have appropriate fields, such as:
+
+- project/snapshot identifier
+- batch identifier
+- assessment job identifier
+- provider
+- model ID
+- component identifier
+- rule identifiers
+- context hash
+- prompt/schema version
+- request status
+- attempt number
+- provider request ID, if available
+- creation and completion timestamps
+- response reference or stored result
+- response validation status
+- error classification
+
+Use a deterministic idempotency key based on the relevant project snapshot, model, component, rules, context and prompt/schema version.
+
+Before scheduling a job:
+
+1. Check whether the exact assessment already exists.
+2. If a valid completed assessment exists for the same snapshot and configuration, reuse it.
+3. If the request is already in progress, do not create a duplicate.
+4. If it failed with a retryable error, follow the retry policy.
+5. If it failed permanently, preserve the failure status.
+6. If the project content or assessment configuration changed, create a new assessment version.
+
+Important distinction:
+
+Deduplication must prevent repeated execution of the same model-component-rule-version assessment.
+
+It must NOT accidentally prevent different models from assessing the same component. Independent model assessments are intentional.
+
+Handle uncertain request outcomes carefully. Do not blindly resend requests when it is unclear whether the provider already processed them.
+
+---
+
+# 7. Output acceptance and validation
+
+Do not assume all six providers accept the same JSON output configuration.
+
+For EACH model, inspect its official documentation and establish:
+
+- Whether JSON mode is supported.
+- Whether JSON Schema constrained output is supported.
+- Whether structured output is supported through the exact API endpoint being used.
+- What parameter names are required.
+- Whether the model has limitations on schema complexity.
+- What finish reasons indicate a complete response.
+- How incomplete or truncated responses are represented.
+- How token usage is returned.
+- How errors and rate limits are represented.
+
+Use provider-specific request adapters where required.
+
+Normalize successful responses into one internal assessment contract.
+
+The internal assessment should support:
+
+- `potential_issue`
+- `no_issue_detected`
+- `insufficient_context`
+
+It should contain only the necessary information:
+
+- Rule ID.
+- Component/target ID.
+- Status.
+- Short explanation.
+- Supporting evidence references.
+- Confidence, if supported and meaningful.
+
+The output must be small.
+
+Do not request long explanations or unnecessary prose.
+
+Implement server-side validation even when the provider supports JSON Schema.
+
+Validate:
+
+1. JSON syntax.
+2. Required fields.
+3. Allowed status values.
+4. Valid rule IDs.
+5. Valid component IDs.
+6. Evidence references against the context actually sent.
+7. Output size.
+8. Completion status.
+
+Never accept truncated JSON as a successful assessment.
+
+Do not treat malformed or incomplete responses as `no_issue_detected`.
+
+Keep incomplete, invalid, unsupported and failed responses distinguishable.
+
+---
+
+# 8. Model execution and failure isolation
+
+One model failing must not stop the other five.
+
+Examples:
+
+- Groq quota exhausted: Cloudflare models should continue.
+- One model returns invalid JSON: other models should continue.
+- One provider times out: other provider should continue.
+- One model is unavailable: preserve the failure and continue other jobs.
+
+Implement:
+
+- Provider-specific concurrency limits.
+- Model-specific rate-limit configuration.
+- Retry with backoff only for appropriate transient errors.
+- Respect provider `Retry-After` information.
+- Avoid retrying permanent errors.
+- Maintain a strict ₹0 usage budget.
+- No paid fallback.
+- No automatic model substitution.
+- Track token usage where providers expose it.
+
+The application must be able to report partial results accurately.
+
+---
+
+# 9. Old AI implementation cleanup
+
+I do not want the existing local Qwen assessment implementation or the old Gemini/single-model implementation to remain as competing assessment pipelines.
+
+Inspect the entire existing AI-related implementation first.
+
+Identify:
+
+- Local Qwen model integration.
+- Gemini provider implementation.
+- Other old model/provider implementations.
+- Old AI-specific configuration.
+- Old model-specific environment variables.
+- Old assessment orchestration.
+- Old AI-only usage/budget tracking.
+- Old provider-specific tests.
+- Obsolete AI documentation.
+- Dependencies used exclusively by the old implementation.
+
+Remove obsolete AI implementation code where it is genuinely no longer needed.
+
+However:
+
+DO NOT delete useful shared infrastructure simply because an AI file uses it.
+
+Preserve:
+
+- Phase 3 context extraction.
+- Context adapter.
+- Context types and shared evidence structures.
+- Shared analysis types needed by IBM.
+- IBM checker and its tests.
+- Shared backend utilities.
+- Frontend IBM functionality.
+
+Before deleting files, inspect their imports and dependencies.
+
+Do not remove files that are still used by the IBM checker or other working features.
+
+Do not remove user data, existing project files or unrelated functionality.
+
+---
+
+# 10. Implementation phases
+
+Follow this exact sequence.
+
+## Phase A — Repository audit
+
+- Inspect the repository structure.
+- Inspect existing AI implementation.
+- Inspect local Qwen integration.
+- Inspect Gemini and other model integrations.
+- Inspect existing AI documentation and Markdown files.
+- Inspect Phase 3 extraction and adapter code.
+- Inspect IBM integration and tests.
+- Inspect persistence/database architecture.
+- Identify shared code and obsolete AI-specific code.
+
+Deliver an audit report before making destructive changes.
+
+## Phase B — Official documentation verification
+
+Research official documentation for both providers and all six candidates.
+
+Create a Markdown document:
+
+`docs/ai/SIX_MODEL_PROVIDER_VERIFICATION.md`
+
+For each model, record:
+
+- Verified model ID.
+- Official model documentation URL.
+- API endpoint.
+- Context window.
+- Maximum output tokens.
+- Structured output capabilities.
+- Free-tier availability.
+- Request and token quotas.
+- Rate limits.
+- Concurrency restrictions, if documented.
+- Relevant privacy information.
+- Unverified details.
+- Final status: verified, partially verified or unavailable.
+
+Do not invent missing information.
+
+Clearly distinguish published limits from limits that must be confirmed in the provider dashboard.
+
+If a model is unavailable for free API access, mark it unavailable instead of implementing a paid route.
+
+## Phase C — Architecture and migration plan
+
+Create:
+
+`docs/ai/SIX_MODEL_ARCHITECTURE.md`
+
+Document:
+
+- Provider abstraction.
+- Six-model configuration.
+- Assessment job structure.
+- Batch scheduler.
+- Persistent request ledger.
+- Idempotency.
+- Concurrency controls.
+- Output validation.
+- Retry policies.
+- Partial failure handling.
+- Token budgets.
+- Report integration.
+- Future React project extraction integration.
+
+Explain how the new system reuses Phase 3 and leaves IBM unchanged.
+
+## Phase D — Remove obsolete AI implementation
+
+After completing the audit and architecture plan:
+
+- Remove obsolete local Qwen execution code.
+- Remove old Gemini/single-model orchestration.
+- Remove obsolete provider implementations.
+- Remove obsolete model-specific configuration.
+- Remove obsolete dependencies only when proven exclusive to the old implementation.
+- Preserve reusable context and shared infrastructure.
+
+Do not remove the IBM integration.
+
+## Phase E — Implement provider clients
+
+Implement direct Groq and Cloudflare provider clients.
+
+Add explicit configuration for the six verified models.
+
+Use secure environment variables.
+
+Implement provider-specific request and response adapters.
+
+Do not make live inference requests today.
+
+## Phase F — Implement assessment scheduler
+
+Implement the batch and job architecture.
+
+Support:
+
+- Six-model execution.
+- Parallel jobs.
+- Bounded concurrency.
+- Provider-specific limits.
+- Persistent request tracking.
+- Idempotency.
+- Deduplication.
+- Retry handling.
+- Partial failure handling.
+- Usage accounting.
+
+Ensure the same assessment cannot be accidentally executed repeatedly.
+
+## Phase G — Implement output normalization and validation
+
+Implement the shared assessment contract.
+
+Implement provider-specific response parsing.
+
+Validate all model outputs server-side.
+
+Handle incomplete responses and finish reasons correctly.
+
+Do not accept invalid or truncated assessments.
+
+## Phase H — Report and fixing-prompt integration
+
+Prepare the integration points for:
+
+- IBM findings.
+- Six-model advisory assessments.
+- Aggregated results.
+- Disagreements between models.
+- Insufficient-context results.
+- Failed model assessments.
+
+Keep IBM and AI findings separate.
+
+Prepare the report output and a single consolidated fixing-prompt generator.
+
+The fixing prompt must eventually contain actionable accessibility issues, affected components, evidence, relevant rules and suggested corrections.
+
+The user's external coding model will perform the actual fixes.
+
+Do not implement automatic code modification in this application.
+
+---
+
+# 11. Verification required TODAY
+
+Today's task is implementation, documentation and local verification only.
+
+You MAY:
+
+- Inspect source code.
+- Read official documentation.
+- Implement provider clients.
+- Implement scheduler and ledger.
+- Add unit tests using mocks.
+- Run existing unit tests.
+- Run lint.
+- Run TypeScript build.
+- Run `git diff --check`.
+- Verify IBM functionality has not been modified through code inspection and existing tests.
+
+You MUST NOT:
+
+- Send live inference requests.
+- Consume provider free-tier quotas.
+- Test the six models with real prompts.
+- Claim that any model successfully generated an assessment.
+- Claim the six-model integration is runtime-verified.
+
+Tomorrow we will perform live testing.
+
+Prepare a separate document:
+
+`docs/ai/SIX_MODEL_TEST_PLAN.md`
+
+Include tomorrow's test sequence:
+
+1. Individual provider connection tests.
+2. One small assessment per model.
+3. JSON completion and validation tests.
+4. Output token limit tests.
+5. Parallel execution test.
+6. Batch tracking test.
+7. Duplicate request prevention test.
+8. Rate-limit and retry test.
+9. Partial provider failure test.
+10. Repeated analysis with unchanged project snapshot.
+11. Changed project snapshot.
+12. Full 10–20-page project simulation when React extraction is available.
+
+---
+
+# 12. Working rules
+
+- Work phase by phase.
+- Do not skip ahead.
+- Do not make large speculative changes.
+- Inspect before deleting.
+- Do not change IBM implementation.
+- Do not create duplicate context extraction.
+- Do not invent provider capabilities.
+- Do not assume model names or IDs are valid without official verification.
+- Do not use paid inference.
+- Do not silently substitute models.
+- Do not use unrestricted parallel requests.
+- Do not accept incomplete model output.
+- Do not mark a failed assessment as no issue detected.
+
+Keep code changes focused and maintainable.
+
+After each phase, report:
+
+1. What was inspected or implemented.
+2. Files created, changed and deleted.
+3. Important design decisions.
+4. Verification performed.
+5. Remaining limitations.
+6. Whether the phase is complete.
+
+If a critical model or provider cannot be verified, stop that specific integration and report the issue. Do not fabricate a working implementation.
+
+**Start with Phase A: repository audit. Do not immediately start deleting files or writing provider code.**

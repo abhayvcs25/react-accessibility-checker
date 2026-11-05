@@ -5,10 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { loadBackendEnv } from '../src/env.js';
 
 const variableNames = [
-  'RAC_AI_ENABLED',
-  'RAC_AI_MODEL',
-  'GEMINI_API_KEY',
-  'OPENROUTER_API_KEY',
+  'RAC_LOG_ANALYSIS',
+  'PORT',
 ] as const;
 const previousValues = new Map(
   variableNames.map((name) => [name, process.env[name]]),
@@ -39,24 +37,19 @@ describe('backend environment loading', () => {
     writeFileSync(
       join(backendDirectory, '.env'),
       [
-        'RAC_AI_ENABLED=1',
-        'RAC_AI_MODEL=gemini-3.8-flash',
-        'GEMINI_API_KEY=test-gemini-key',
+        'RAC_LOG_ANALYSIS=0',
       ].join('\n'),
     );
     writeFileSync(
       join(directory, '.env'),
-      'GEMINI_API_KEY=root-gemini-key\nOPENROUTER_API_KEY=root-openrouter-key\n',
+      'PORT=3001\n',
     );
-    process.env.GEMINI_API_KEY = '';
 
     try {
       loadBackendEnv(backendDirectory);
 
-      expect(process.env.RAC_AI_ENABLED).toBe('1');
-      expect(process.env.RAC_AI_MODEL).toBe('gemini-3.8-flash');
-      expect(process.env.GEMINI_API_KEY).toBe('test-gemini-key');
-      expect(process.env.OPENROUTER_API_KEY).toBe('root-openrouter-key');
+      expect(process.env.RAC_LOG_ANALYSIS).toBe('0');
+      expect(process.env.PORT).toBe('3001');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -68,13 +61,13 @@ describe('backend environment loading', () => {
     mkdirSync(backendDirectory);
     writeFileSync(
       join(directory, '.env'),
-      'GEMINI_API_KEY=root-gemini-key\n',
+      'PORT=3002\n',
     );
 
     try {
       loadBackendEnv(backendDirectory);
 
-      expect(process.env.GEMINI_API_KEY).toBe('root-gemini-key');
+      expect(process.env.PORT).toBe('3002');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -7,13 +7,10 @@
     "dev": "tsx watch src/dev.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "ai:test-connection": "tsx src/ai/testConnection.ts",
-    "benchmark:ai": "tsx src/ai/benchmark.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.4.0-next.0",
     "accessibility-checker": "^4.0.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",

@@ -5,8 +5,6 @@ import type { ContextAdapterResult } from '../types/contextV2.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
 import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
 import { assessAdaptedContext } from './contextualAssessment.js'
-import { selectedModel, selectedProvider } from '../ai/config.js'
-import { recordAnalysisDuration } from '../ai/usage.js'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -74,8 +72,8 @@ async function getContextualAssessments(
       'Contextual assessment failed; IBM accessibility results are unaffected.',
     )
     return {
-      modelId: selectedModel.modelId,
-      modelRevision: `${selectedProvider}-managed`,
+      modelId: 'not-configured',
+      modelRevision: 'provider-migration-pending',
       inferenceStatus: 'failed',
       modelLoaded: false,
       assessments: [],
@@ -203,13 +201,6 @@ export function analyzeHtml(
     const totalElapsedMilliseconds = Math.round(
       performance.now() - analysisStartedAt,
     )
-    if (process.env.RAC_AI_ENABLED === '1') {
-      try {
-        recordAnalysisDuration(totalElapsedMilliseconds)
-      } catch (error) {
-        console.error('Failed to persist AI analysis-duration metrics.', error)
-      }
-    }
     logAnalysis('analysis completed', {
       filename,
       totalElapsedMilliseconds,

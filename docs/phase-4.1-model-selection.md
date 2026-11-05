@@ -2,6 +2,12 @@
 
 **Status at the 2026-11-01 research revision:** No application source was changed, no packages or model files were installed/downloaded, and no model was trained.
 
+> **Historical record:** The Phase 4.2 implementation described below was
+> retired by the approved migration prompts 04–05. Local Qwen and Gemini/
+> OpenRouter assessment code are no longer active. Contextual AI is currently
+> disabled while the direct Groq/Cloudflare migration is pending; use
+> [AI provider setup](AI_PROVIDER_SETUP.md) for current behavior.
+
 ### Phase 4.2 implementation update — 2026-11-02
 
 The project selected its already-installed `huggingworld/Qwen3.5-4B-ONNX`

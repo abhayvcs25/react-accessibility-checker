@@ -1,137 +1,603 @@
 import '../env.js';
 
-export type AiProviderId = 'gemini' | 'openrouter';
+export type AiProviderId = 'groq' | 'cloudflare-workers-ai';
 
 export const AI_PROVIDERS = {
-  gemini: {
-    keyEnv: 'GEMINI_API_KEY',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta',
-    localRpmCap: 5,
-    localTpmCap: 20_000,
-    api: 'gemini',
+  groq: {
+    id: 'groq',
+    credentialEnv: ['GROQ_API_KEY'],
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    endpointKind: 'openai-compatible',
+    publishedLimits: {
+      requestsPerMinute: 30,
+      requestsPerDay: 1_000,
+      tokensPerMinute: 8_000,
+      tokensPerDay: 200_000,
+      scope: 'developer-plan-only-not-free-entitlement',
+    },
+    accountVerification: {
+      status: 'partially_verified',
+      source: 'operator_reported_dashboard',
+      plan: 'free',
+      developerPlanActive: false,
+      allowedModelIds: [
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'qwen/qwen3.8-27b',
+      ],
+      paymentMethod: 'unverified',
+      purchasedCredits: 'unverified',
+      autoRecharge: 'unverified',
+      projectLimitsConfigured: false,
+      verificationDate: '2026-11-05',
+    },
   },
-  openrouter: {
-    keyEnv: 'OPENROUTER_API_KEY',
-    endpoint: 'https://openrouter.ai/api/v1',
-    localRpmCap: 20,
-    localTpmCap: 20_000,
-    api: 'openai-compatible',
+  'cloudflare-workers-ai': {
+    id: 'cloudflare-workers-ai',
+    credentialEnv: ['CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_API_TOKEN'],
+    endpoint:
+      'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions',
+    endpointKind: 'openai-compatible',
+    publishedLimits: {
+      requestsPerMinute: 300,
+      requestsPerDay: null,
+      tokensPerMinute: null,
+      tokensPerDay: null,
+      sharedFreeNeuronsPerDay: 10_000,
+      freeAllocationResetsAtUtc: '00:00',
+      paidOverageUsdPerThousandNeurons: 0.011,
+      freeAllocationExhaustionBehavior: 'provider_rejects_requests',
+      scope: 'task-level-default-and-conditional-free-allocation',
+    },
+    accountVerification: {
+      status: 'verified',
+      source: 'operator_reported_dashboard',
+      plan: 'workers_free',
+      workersPaidActive: false,
+      paymentMethodOnFile: false,
+      aiGatewayConfigured: false,
+      aiGatewayCreditsAdded: false,
+      freeNeuronsConsumedAtVerification: 0,
+      verificationDate: '2026-11-05',
+    },
   },
 } as const;
 
-export type AiModelId =
-  | 'gemini-3.8-flash'
-  | 'gemini-3.6-flash'
-  | 'recursive/flint-v1.0:free'
-  | 'google/gemma-4-31b-it:free'
-  | 'nvidia/nemotron-3.5-super-vl:free'
-  | 'cohere/north-mini-code:free';
+export type CandidateModelId =
+  | 'openai/gpt-oss-120b'
+  | 'openai/gpt-oss-20b'
+  | 'qwen/qwen3.8-27b'
+  | '@cf/zai-org/glm-4.7-flash'
+  | '@cf/nvidia/nemotron-3-120b-a12b'
+  | '@cf/google/gemma-4-26b-a4b-it';
 
-export interface AiModelConfig {
-  provider: AiProviderId;
-  modelId: AiModelId;
-  name: string;
-  contextTokens: number;
-  jsonOutput: 'schema' | 'object' | 'prompt';
+const eligibleModelIdBrand: unique symbol = Symbol('eligible-model-id');
+export type EligibleModelId = CandidateModelId & {
+  readonly [eligibleModelIdBrand]: true;
+};
+
+export type ModelEligibility =
+  | 'eligible'
+  | 'disabled_by_operator'
+  | 'blocked_unverified'
+  | 'quota_paused'
+  | 'unavailable';
+
+export type VerificationStatus =
+  | 'unverified'
+  | 'partially_verified'
+  | 'verified';
+
+export type AccountEligibility =
+  | 'zero_cost_eligible'
+  | 'paid_only'
+  | 'unverified'
+  | 'unknown'
+  | null;
+
+export type StructuredOutputCapability =
+  | 'strict_json_schema'
+  | 'unverified'
+  | 'unknown'
+  | null;
+
+export type DocumentationStatus = 'documented' | 'unconfirmed';
+
+export interface ModelPublishedPricing {
+  inputUsdPerMillionTokens: number | null;
+  outputUsdPerMillionTokens: number | null;
+  inputNeuronsPerMillionTokens: number | null;
+  outputNeuronsPerMillionTokens: number | null;
 }
 
-export const AI_MODELS: Record<AiModelId, AiModelConfig> = {
-  'gemini-3.8-flash': {
-    provider: 'gemini',
-    modelId: 'gemini-3.8-flash',
-    name: 'Gemini 3.8 Flash',
-    contextTokens: 1_048_576,
-    jsonOutput: 'schema',
+export interface ModelCapabilityEvidence {
+  apiParameters: {
+    maxTokens: DocumentationStatus;
+    maxCompletionTokens: DocumentationStatus;
+    responseFormat: DocumentationStatus;
+  };
+  jsonMode: DocumentationStatus;
+  jsonSchemaParameter: DocumentationStatus;
+  jsonSchemaModelSupport: DocumentationStatus;
+  strictJsonSchemaParameter: DocumentationStatus;
+  strictJsonSchemaModelSupport: DocumentationStatus;
+  functionCalling: DocumentationStatus;
+  reasoning: DocumentationStatus;
+  vision: DocumentationStatus;
+  batch: DocumentationStatus;
+  zeroDataRetention: DocumentationStatus;
+}
+
+export interface ModelCandidate {
+  providerId: AiProviderId;
+  modelId: CandidateModelId;
+  verificationStatus: VerificationStatus;
+  verificationDate: '2026-11-05';
+  accountVerificationStatus: VerificationStatus;
+  runtimeVerificationStatus: VerificationStatus;
+  accountEligibility: AccountEligibility;
+  eligibility: ModelEligibility;
+  operatorEnabled: boolean;
+  contextTokens: number;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  publishedPricing: ModelPublishedPricing;
+  documentedCapabilities: ModelCapabilityEvidence;
+  requiredStructuredOutput: 'strict_json_schema';
+  structuredOutput: StructuredOutputCapability;
+  eligibilityReason: string;
+  accountLimits: {
+    requestsPerMinute: number | null;
+    requestsPerDay: number | null;
+    tokensPerMinute: number | null;
+    tokensPerDay: number | null;
+  };
+}
+
+const operatorReportedGroqLimits = {
+  requestsPerMinute: 30,
+  requestsPerDay: 1_000,
+  tokensPerMinute: 8_000,
+  tokensPerDay: 200_000,
+} as const;
+
+const blockedCloudflareLimits = {
+  requestsPerMinute: null,
+  requestsPerDay: null,
+  tokensPerMinute: null,
+  tokensPerDay: null,
+} as const;
+
+const unconfirmedCapabilities: ModelCapabilityEvidence = {
+  apiParameters: {
+    maxTokens: 'unconfirmed',
+    maxCompletionTokens: 'unconfirmed',
+    responseFormat: 'unconfirmed',
   },
-  'gemini-3.6-flash': {
-    provider: 'gemini',
-    modelId: 'gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
-    contextTokens: 1_048_576,
-    jsonOutput: 'schema',
+  jsonMode: 'unconfirmed',
+  jsonSchemaParameter: 'unconfirmed',
+  jsonSchemaModelSupport: 'unconfirmed',
+  strictJsonSchemaParameter: 'unconfirmed',
+  strictJsonSchemaModelSupport: 'unconfirmed',
+  functionCalling: 'unconfirmed',
+  reasoning: 'unconfirmed',
+  vision: 'unconfirmed',
+  batch: 'unconfirmed',
+  zeroDataRetention: 'unconfirmed',
+};
+
+const documentedCloudflareCapabilities: ModelCapabilityEvidence = {
+  apiParameters: {
+    maxTokens: 'documented',
+    maxCompletionTokens: 'documented',
+    responseFormat: 'documented',
   },
-  'recursive/flint-v1.0:free': {
-    provider: 'openrouter',
-    modelId: 'recursive/flint-v1.0:free',
-    name: 'Recursive Flint',
-    contextTokens: 262_144,
-    jsonOutput: 'object',
+  jsonMode: 'unconfirmed',
+  jsonSchemaParameter: 'documented',
+  jsonSchemaModelSupport: 'unconfirmed',
+  strictJsonSchemaParameter: 'documented',
+  strictJsonSchemaModelSupport: 'unconfirmed',
+  functionCalling: 'documented',
+  reasoning: 'documented',
+  vision: 'unconfirmed',
+  batch: 'unconfirmed',
+  zeroDataRetention: 'documented',
+};
+
+const cloudflareBasePricing = {
+  inputNeuronsPerMillionTokens: null,
+  outputNeuronsPerMillionTokens: null,
+} as const;
+
+const documentedGroqStrictSchemaCapabilities: ModelCapabilityEvidence = {
+  ...unconfirmedCapabilities,
+  apiParameters: {
+    ...unconfirmedCapabilities.apiParameters,
+    responseFormat: 'documented',
   },
-  'google/gemma-4-31b-it:free': {
-    provider: 'openrouter',
-    modelId: 'google/gemma-4-31b-it:free',
-    name: 'Google Gemma 4 31B IT',
-    contextTokens: 262_144,
-    jsonOutput: 'object',
+  jsonSchemaParameter: 'documented',
+  jsonSchemaModelSupport: 'documented',
+  strictJsonSchemaParameter: 'documented',
+  strictJsonSchemaModelSupport: 'documented',
+};
+
+const unresolvedGroqQwenCapabilities: ModelCapabilityEvidence = {
+  ...documentedGroqStrictSchemaCapabilities,
+  strictJsonSchemaModelSupport: 'unconfirmed',
+};
+
+export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
+  'openai/gpt-oss-120b': {
+    providerId: 'groq',
+    modelId: 'openai/gpt-oss-120b',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'partially_verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'unverified',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
+    contextTokens: 131_072,
+    maxInputTokens: null,
+    maxOutputTokens: 65_536,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.15,
+      outputUsdPerMillionTokens: 0.6,
+      ...cloudflareBasePricing,
+    },
+    documentedCapabilities: documentedGroqStrictSchemaCapabilities,
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'strict_json_schema',
+    eligibilityReason:
+      'Groq billing-method, purchased-credit, and auto-recharge status remain unverified.',
+    accountLimits: operatorReportedGroqLimits,
   },
-  'nvidia/nemotron-3.5-super-vl:free': {
-    provider: 'openrouter',
-    modelId: 'nvidia/nemotron-3.5-super-vl:free',
-    name: 'NVIDIA Nemotron 3.5 Super VL',
-    contextTokens: 1_000_000,
-    jsonOutput: 'object',
+  'openai/gpt-oss-20b': {
+    providerId: 'groq',
+    modelId: 'openai/gpt-oss-20b',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'partially_verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'unverified',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
+    contextTokens: 131_072,
+    maxInputTokens: null,
+    maxOutputTokens: 65_536,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.075,
+      outputUsdPerMillionTokens: 0.3,
+      ...cloudflareBasePricing,
+    },
+    documentedCapabilities: documentedGroqStrictSchemaCapabilities,
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'strict_json_schema',
+    eligibilityReason:
+      'Groq billing-method, purchased-credit, and auto-recharge status remain unverified.',
+    accountLimits: operatorReportedGroqLimits,
   },
-  'cohere/north-mini-code:free': {
-    provider: 'openrouter',
-    modelId: 'cohere/north-mini-code:free',
-    name: 'Cohere North Mini Code',
+  'qwen/qwen3.8-27b': {
+    providerId: 'groq',
+    modelId: 'qwen/qwen3.8-27b',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'partially_verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'unverified',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
+    contextTokens: 131_072,
+    maxInputTokens: null,
+    maxOutputTokens: 16_384,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.8,
+      outputUsdPerMillionTokens: 4,
+      ...cloudflareBasePricing,
+    },
+    documentedCapabilities: unresolvedGroqQwenCapabilities,
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'unverified',
+    eligibilityReason:
+      'Groq zero-cost account eligibility is unverified; strict JSON Schema support is contradictory in the current documentation.',
+    accountLimits: operatorReportedGroqLimits,
+  },
+  '@cf/zai-org/glm-4.7-flash': {
+    providerId: 'cloudflare-workers-ai',
+    modelId: '@cf/zai-org/glm-4.7-flash',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
+    contextTokens: 131_072,
+    maxInputTokens: null,
+    maxOutputTokens: null,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.0605,
+      outputUsdPerMillionTokens: 0.4,
+      inputNeuronsPerMillionTokens: 5_500,
+      outputNeuronsPerMillionTokens: 36_400,
+    },
+    documentedCapabilities: {
+      ...documentedCloudflareCapabilities,
+      vision: 'unconfirmed',
+      batch: 'unconfirmed',
+    },
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'unverified',
+    eligibilityReason:
+      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+    accountLimits: blockedCloudflareLimits,
+  },
+  '@cf/nvidia/nemotron-3-120b-a12b': {
+    providerId: 'cloudflare-workers-ai',
+    modelId: '@cf/nvidia/nemotron-3-120b-a12b',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
     contextTokens: 256_000,
-    jsonOutput: 'prompt',
+    maxInputTokens: null,
+    maxOutputTokens: null,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.5,
+      outputUsdPerMillionTokens: 1.5,
+      inputNeuronsPerMillionTokens: 45_455,
+      outputNeuronsPerMillionTokens: 136_364,
+    },
+    documentedCapabilities: {
+      ...documentedCloudflareCapabilities,
+      vision: 'unconfirmed',
+      batch: 'unconfirmed',
+    },
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'unverified',
+    eligibilityReason:
+      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+    accountLimits: blockedCloudflareLimits,
+  },
+  '@cf/google/gemma-4-26b-a4b-it': {
+    providerId: 'cloudflare-workers-ai',
+    modelId: '@cf/google/gemma-4-26b-a4b-it',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-05',
+    accountVerificationStatus: 'verified',
+    runtimeVerificationStatus: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
+    eligibility: 'blocked_unverified',
+    operatorEnabled: false,
+    contextTokens: 256_000,
+    maxInputTokens: null,
+    maxOutputTokens: null,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.1,
+      outputUsdPerMillionTokens: 0.3,
+      inputNeuronsPerMillionTokens: 9_091,
+      outputNeuronsPerMillionTokens: 27_273,
+    },
+    documentedCapabilities: {
+      ...documentedCloudflareCapabilities,
+      vision: 'documented',
+      batch: 'documented',
+    },
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'unverified',
+    eligibilityReason:
+      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+    accountLimits: blockedCloudflareLimits,
   },
 };
 
-const modelIds = Object.keys(AI_MODELS) as AiModelId[];
-const configuredModelId = process.env.RAC_AI_MODEL?.trim();
-if (configuredModelId && !modelIds.includes(configuredModelId as AiModelId)) {
-  throw new Error(
-    `Unsupported RAC_AI_MODEL "${configuredModelId}". Choose one of: ${modelIds.join(', ')}.`,
+export type EligibleModelCandidate = Omit<
+  ModelCandidate,
+  | 'modelId'
+  | 'eligibility'
+  | 'operatorEnabled'
+  | 'verificationStatus'
+  | 'accountVerificationStatus'
+  | 'accountEligibility'
+  | 'maxOutputTokens'
+  | 'structuredOutput'
+> & {
+  modelId: EligibleModelId;
+  eligibility: 'eligible';
+  operatorEnabled: true;
+  verificationStatus: 'verified';
+  accountVerificationStatus: 'verified';
+  accountEligibility: 'zero_cost_eligible';
+  maxOutputTokens: number;
+  requiredStructuredOutput: 'strict_json_schema';
+  structuredOutput: 'strict_json_schema';
+};
+
+export class ModelNotEligibleError extends Error {
+  constructor(
+    readonly modelId: CandidateModelId,
+    readonly reason: string,
+  ) {
+    super(`Model ${modelId} is not eligible: ${reason}`);
+    this.name = 'ModelNotEligibleError';
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isKnownAccountLimit(value: unknown): value is number | null {
+  return (
+    value === null ||
+    (typeof value === 'number' && Number.isFinite(value) && value >= 0)
   );
 }
-export const selectedModelId: AiModelId =
-  configuredModelId && modelIds.includes(configuredModelId as AiModelId)
-    ? (configuredModelId as AiModelId)
-    : 'gemini-3.8-flash';
-export const selectedModel = AI_MODELS[selectedModelId];
-export const selectedProvider = selectedModel.provider;
-export const remoteAiEnabled = process.env.RAC_AI_ENABLED === '1';
 
-function positiveInteger(value: string | undefined, fallback: number): number {
-  if (value === undefined || value.trim() === '') {
-    return fallback;
+function isCandidateModelId(value: string): value is CandidateModelId {
+  return Object.hasOwn(MODEL_CANDIDATES, value);
+}
+
+export function isCandidateEligible(
+  candidate: unknown,
+): candidate is EligibleModelCandidate {
+  if (!isRecord(candidate)) {
+    return false;
   }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`Expected a positive integer AI setting, received "${value}".`);
+
+  const modelId = candidate.modelId;
+  const accountLimits = candidate.accountLimits;
+  if (
+    typeof modelId !== 'string' ||
+    !isCandidateModelId(modelId) ||
+    !isRecord(accountLimits) ||
+    !isKnownAccountLimit(accountLimits.requestsPerMinute) ||
+    !isKnownAccountLimit(accountLimits.requestsPerDay) ||
+    !isKnownAccountLimit(accountLimits.tokensPerMinute) ||
+    !isKnownAccountLimit(accountLimits.tokensPerDay) ||
+    typeof candidate.providerId !== 'string' ||
+    candidate.providerId !== MODEL_CANDIDATES[modelId].providerId ||
+    typeof candidate.verificationDate !== 'string' ||
+    candidate.verificationDate.length === 0 ||
+    typeof candidate.contextTokens !== 'number' ||
+    !Number.isFinite(candidate.contextTokens) ||
+    candidate.contextTokens <= 0 ||
+    typeof candidate.eligibilityReason !== 'string' ||
+    candidate.eligibilityReason.length === 0
+  ) {
+    return false;
   }
-  return parsed;
+
+  if (
+    candidate.verificationStatus !== 'verified' ||
+    candidate.accountVerificationStatus !== 'verified' ||
+    candidate.accountEligibility !== 'zero_cost_eligible' ||
+    candidate.eligibility !== 'eligible' ||
+    candidate.operatorEnabled !== true ||
+    typeof candidate.maxOutputTokens !== 'number' ||
+    !Number.isFinite(candidate.maxOutputTokens) ||
+    candidate.maxOutputTokens <= 0 ||
+    candidate.requiredStructuredOutput !== 'strict_json_schema' ||
+    candidate.structuredOutput !== candidate.requiredStructuredOutput
+  ) {
+    return false;
+  }
+  return (
+    candidate.providerId === 'groq' ||
+    candidate.providerId === 'cloudflare-workers-ai'
+  );
 }
 
-export const aiRuntimeConfig = {
-  concurrency: Math.min(10, positiveInteger(process.env.RAC_AI_CONCURRENCY, 2)),
-  requestsPerMinute: positiveInteger(
-    process.env.RAC_AI_REQUESTS_PER_MINUTE,
-    5,
-  ),
-  tokensPerMinute: positiveInteger(
-    process.env.RAC_AI_TOKENS_PER_MINUTE,
-    20_000,
-  ),
-  maxOutputTokens: Math.min(
-    512,
-    positiveInteger(process.env.RAC_AI_MAX_OUTPUT_TOKENS, 512),
-  ),
-  maxRetries: Math.min(4, positiveInteger(process.env.RAC_AI_MAX_RETRIES, 2)),
-  cacheTtlMs: positiveInteger(
-    process.env.RAC_AI_CACHE_TTL_MS,
-    12 * 60 * 60 * 1000,
-  ),
-};
-
-export function getProviderApiKey(provider: AiProviderId): string | undefined {
-  const key = process.env[AI_PROVIDERS[provider].keyEnv]?.trim();
-  return key || undefined;
+function asEligibleCandidate(
+  candidate: ModelCandidate,
+): EligibleModelCandidate | undefined {
+  if (!isCandidateEligible(candidate)) {
+    return undefined;
+  }
+  return {
+    providerId: candidate.providerId,
+    modelId: candidate.modelId as EligibleModelId,
+    verificationStatus: candidate.verificationStatus,
+    verificationDate: candidate.verificationDate,
+    accountVerificationStatus: candidate.accountVerificationStatus,
+    runtimeVerificationStatus: candidate.runtimeVerificationStatus,
+    accountEligibility: candidate.accountEligibility,
+    eligibility: 'eligible',
+    operatorEnabled: true,
+    contextTokens: candidate.contextTokens,
+    maxInputTokens: candidate.maxInputTokens,
+    maxOutputTokens: candidate.maxOutputTokens,
+    publishedPricing: candidate.publishedPricing,
+    documentedCapabilities: candidate.documentedCapabilities,
+    requiredStructuredOutput: candidate.requiredStructuredOutput,
+    structuredOutput: 'strict_json_schema',
+    eligibilityReason: candidate.eligibilityReason,
+    accountLimits: candidate.accountLimits,
+  };
 }
 
-export function isProviderConfigured(provider: AiProviderId): boolean {
-  return getProviderApiKey(provider) !== undefined;
+export function getEligibleModels(): EligibleModelCandidate[] {
+  return Object.values(MODEL_CANDIDATES).flatMap((candidate) => {
+    const eligible = asEligibleCandidate(candidate);
+    return eligible ? [eligible] : [];
+  });
 }
+
+export function requireEligibleModel(
+  modelId: CandidateModelId,
+): EligibleModelCandidate {
+  const candidate = MODEL_CANDIDATES[modelId];
+  const eligible = asEligibleCandidate(candidate);
+  if (!eligible) {
+    throw new ModelNotEligibleError(modelId, candidate.eligibilityReason);
+  }
+  return eligible;
+}
+
+export function isModelEligible(modelId: CandidateModelId): boolean {
+  return isCandidateEligible(MODEL_CANDIDATES[modelId]);
+}
+
+export type ProviderCredentials =
+  | {
+      status: 'configured';
+      providerId: AiProviderId;
+      groqApiKey: string;
+    }
+  | {
+      status: 'configured';
+      providerId: AiProviderId;
+      cloudflareAccountId: string;
+      cloudflareApiToken: string;
+    }
+  | {
+      status: 'missing_credentials';
+      providerId: AiProviderId;
+      missing: readonly string[];
+    };
+
+export function getProviderCredentials(
+  providerId: AiProviderId,
+  environment: NodeJS.ProcessEnv = process.env,
+): ProviderCredentials {
+  if (providerId === 'groq') {
+    const groqApiKey = environment.GROQ_API_KEY?.trim();
+    return groqApiKey
+      ? { status: 'configured', providerId, groqApiKey }
+      : {
+          status: 'missing_credentials',
+          providerId,
+          missing: ['GROQ_API_KEY'],
+        };
+  }
+
+  const cloudflareAccountId = environment.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const cloudflareApiToken = environment.CLOUDFLARE_API_TOKEN?.trim();
+  if (!cloudflareAccountId || !cloudflareApiToken) {
+    return {
+      status: 'missing_credentials',
+      providerId,
+      missing: [
+        ...(cloudflareAccountId ? [] : ['CLOUDFLARE_ACCOUNT_ID']),
+        ...(cloudflareApiToken ? [] : ['CLOUDFLARE_API_TOKEN']),
+      ],
+    };
+  }
+  return {
+    status: 'configured',
+    providerId,
+    cloudflareAccountId,
+    cloudflareApiToken,
+  };
+}
+
+export const AI_APPLICATION_LIMITS = {
+  maxConcurrentPerModel: 1,
+  maxConcurrentPerProvider: 3,
+  maxConcurrentTotal: 6,
+  requestsPerMinutePerProvider: null,
+  tokensPerMinutePerProvider: null,
+} as const;

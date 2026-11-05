@@ -2,23 +2,10 @@ import { createServer } from 'node:http';
 import cors from 'cors';
 import express from 'express';
 import { MAX_BODY_SIZE, PORT } from './config.js';
-import { checkModelConnection } from './ai/providerClient.js';
-import { remoteAiEnabled, selectedModelId } from './ai/config.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import analyzeRouter from './routes/analyze.js';
-import aiRouter, { setAiConnectionState } from './routes/ai.js';
+import aiRouter from './routes/ai.js';
 import { closeChecker } from './services/checker.js';
-
-if (remoteAiEnabled) {
-  void checkModelConnection(selectedModelId).then((connected) => {
-    setAiConnectionState(connected ? 'connected' : 'unavailable');
-  }).catch((error: unknown) => {
-    console.error('[ai] Startup connection check failed unexpectedly.', error);
-    setAiConnectionState('unavailable');
-  });
-} else {
-  setAiConnectionState('disabled', null);
-}
 
 const app = express();
 
