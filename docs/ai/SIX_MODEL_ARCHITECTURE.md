@@ -420,22 +420,30 @@ Common validated assessment:
   "status": "potential_issue",
   "explanation": "Short, evidence-grounded explanation.",
   "evidenceRefs": ["evidence-id"],
-  "confidence": null,
   "providerId": "provider-id",
   "modelId": "exact-model-id"
 }
 ```
 
 `status` is exactly one of `potential_issue`, `no_issue_detected`, or
-`insufficient_context`. Confidence is optional and must be shown as
-model-reported, not a calibrated probability. Persist `failed`,
-`invalid_response`, `incomplete`, `unsupported`, and `unknown_outcome` as job
-states rather than converting any of them to `no_issue_detected`.
+`insufficient_context`. Confidence is optional; when present it must be a
+finite number from 0 to 1 and must be shown as model-reported, not a calibrated
+probability. Persist `invalid_response`, `retryable_failed`,
+`permanent_failed`, `blocked`, and
+`unknown_outcome` as distinct job states rather than converting any of them to
+`no_issue_detected`. Store validation and provider failure reasons in the
+attempt's error classification.
 
-Validate JSON syntax, required fields and types, allowed status, target/rule
-identity, evidence references against the exact context sent, response-size
-limits, and finish reason. Treat truncation/length finish reasons and empty
-candidate lists as incomplete. Do not accept extra or fabricated evidence.
+Normalize parsed output through the shared assessment validator. Enforce a
+64 KiB response limit and 2,000-character explanation limit, reject missing or
+extra contract fields, and check JSON syntax, field types, schema version,
+allowed status, target/rule/provider/model identity, evidence references
+against the exact context sent, and finish status. Treat
+truncation/length finish reasons and empty candidate lists as incomplete.
+Persist malformed JSON, schema-invalid output, semantic-invalid output,
+oversized output, unsupported finish reasons, and provider-malformed responses
+as distinct invalid-response error classes. Do not accept extra or fabricated
+evidence.
 Keep raw parser diagnostics redacted and bounded; do not log source content,
 credentials, or full provider payloads.
 

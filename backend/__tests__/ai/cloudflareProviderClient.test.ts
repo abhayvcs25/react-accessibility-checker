@@ -295,6 +295,48 @@ describe('Cloudflare Workers AI provider adapter', () => {
     });
   });
 
+  it('classifies unknown and missing finish reasons as incomplete', async () => {
+    const unknownFetcher = createFetch(
+      jsonResponse(
+        completion({
+          choices: [
+            {
+              finish_reason: 'future_finish_state',
+              message: { content: '{"passed":true}' },
+            },
+          ],
+        }),
+      ),
+    );
+    await expect(
+      createAdapter(unknownFetcher).complete(makeRequest(modelIds[0])),
+    ).resolves.toMatchObject({
+      status: 'incomplete',
+      reason: 'unsupported',
+      finishReason: 'future_finish_state',
+    });
+
+    const missingFetcher = createFetch(
+      jsonResponse(
+        completion({
+          choices: [
+            {
+              finish_reason: null,
+              message: { content: '{"passed":true}' },
+            },
+          ],
+        }),
+      ),
+    );
+    await expect(
+      createAdapter(missingFetcher).complete(makeRequest(modelIds[0])),
+    ).resolves.toMatchObject({
+      status: 'incomplete',
+      reason: 'provider_incomplete',
+      finishReason: null,
+    });
+  });
+
   it.each([
     ['missing choices', { choices: [] }],
     [
@@ -307,7 +349,7 @@ describe('Cloudflare Workers AI provider adapter', () => {
     await expect(
       createAdapter(fetcher).complete(makeRequest(modelIds[0])),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request' },
+      metadata: { kind: 'malformed_response' },
     });
   });
 
@@ -316,7 +358,7 @@ describe('Cloudflare Workers AI provider adapter', () => {
     await expect(
       createAdapter(fetcher).complete(makeRequest(modelIds[0])),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request', statusCode: 200 },
+      metadata: { kind: 'malformed_response', statusCode: 200 },
     });
 
     const invalidJsonFetcher = createFetch(
@@ -334,7 +376,7 @@ describe('Cloudflare Workers AI provider adapter', () => {
     await expect(
       createAdapter(invalidJsonFetcher).complete(makeRequest(modelIds[0])),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request' },
+      metadata: { kind: 'malformed_response' },
       message: 'Cloudflare returned invalid JSON for a JSON Schema request.',
     });
   });

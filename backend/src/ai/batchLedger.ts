@@ -8,12 +8,17 @@ import {
   type AiProviderId,
   type CandidateModelId,
 } from './config.js';
+import {
+  validateAssessment,
+  type JsonValue,
+} from './assessmentValidation.js';
+
+export type { JsonValue } from './assessmentValidation.js';
 
 const LEDGER_SCHEMA_VERSION = 2;
 const DEFAULT_RETENTION_DAYS = 7;
 const DEFAULT_ATTEMPT_LEASE_MS = 120_000;
 const MAX_NORMALIZED_RESULT_BYTES = 1_000_000;
-const SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS = new Set(['schema-v1']);
 
 const TERMINAL_STATUSES = [
   'succeeded',
@@ -39,14 +44,6 @@ export type JobStatus =
 export type AttemptStatus = Exclude<JobStatus, 'queued' | 'in_progress'> | 'in_progress';
 
 export type ValidationStatus = 'valid' | 'invalid' | 'not_run';
-
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [key: string]: JsonValue };
 
 export interface BatchLedgerOptions {
   filePath?: string;
@@ -327,70 +324,6 @@ function isProcessAlive(processId: number): boolean {
     }
     return true;
   }
-}
-
-function validateAssessmentResult(
-  value: unknown,
-  job: {
-    componentId: string;
-    providerId: string;
-    modelId: string;
-    schemaVersion: string;
-  },
-  ruleIds: ReadonlySet<string>,
-  evidenceRefIds: ReadonlySet<string>,
-): JsonValue {
-  if (!SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS.has(job.schemaVersion)) {
-    throw new Error(
-      `Unsupported assessment result schema version: ${job.schemaVersion}.`,
-    );
-  }
-  if (!isRecord(value)) {
-    throw new TypeError('The assessment result must be an object.');
-  }
-  const allowedFields = new Set([
-    'targetId',
-    'ruleId',
-    'status',
-    'explanation',
-    'evidenceRefs',
-    'confidence',
-    'providerId',
-    'modelId',
-  ]);
-  if (Object.keys(value).some((key) => !allowedFields.has(key))) {
-    throw new TypeError('The assessment result contains unsupported fields.');
-  }
-  if (
-    value.targetId !== job.componentId ||
-    typeof value.ruleId !== 'string' ||
-    !ruleIds.has(value.ruleId) ||
-    typeof value.status !== 'string' ||
-    !['potential_issue', 'no_issue_detected', 'insufficient_context'].includes(
-      value.status,
-    ) ||
-    typeof value.explanation !== 'string' ||
-    value.explanation.trim().length === 0 ||
-    value.explanation.length > 2_000 ||
-    !Array.isArray(value.evidenceRefs) ||
-    value.evidenceRefs.some(
-      (reference) =>
-        typeof reference !== 'string' || !evidenceRefIds.has(reference),
-    ) ||
-    value.providerId !== job.providerId ||
-    value.modelId !== job.modelId ||
-    (value.confidence !== undefined &&
-      value.confidence !== null &&
-      (typeof value.confidence !== 'number' ||
-        !Number.isFinite(value.confidence) ||
-        value.confidence < 0 ||
-        value.confidence > 1))
-  ) {
-    throw new TypeError(
-      'The assessment result does not match the job schema, identity, or permitted evidence.',
-    );
-  }
-  return canonicalize(value);
 }
 
 export function deriveJobIdempotencyKey(
@@ -1130,16 +1063,16 @@ export class BatchLedger {
           ).map((reference) => toText(reference.evidence_ref_id)),
         );
         normalizedResultJson = JSON.stringify(
-          validateAssessmentResult(
+          validateAssessment(
             input.normalizedResult,
             {
-              componentId: toText(job.component_id),
+              targetId: toText(job.component_id),
               providerId: toText(job.provider_id),
               modelId: toText(job.model_id),
               schemaVersion: toText(job.schema_version),
+              allowedRuleIds: ruleIds,
+              allowedEvidenceRefIds: evidenceRefIds,
             },
-            ruleIds,
-            evidenceRefIds,
           ),
         );
         if (
@@ -1285,16 +1218,16 @@ export class BatchLedger {
           .all(jobId) as DatabaseRow[]
       ).map((reference) => toText(reference.evidence_ref_id)),
     );
-    return validateAssessmentResult(
+    return validateAssessment(
       value,
       {
-        componentId: toText(job.component_id),
+        targetId: toText(job.component_id),
         providerId: toText(job.provider_id),
         modelId: toText(job.model_id),
         schemaVersion: toText(job.schema_version),
+        allowedRuleIds: ruleIds,
+        allowedEvidenceRefIds: evidenceRefIds,
       },
-      ruleIds,
-      evidenceRefIds,
     );
   }
 

@@ -18,6 +18,10 @@ import {
   type JsonValue,
 } from './batchLedger.js';
 import {
+  AssessmentValidationError,
+  parseAssessmentResponse,
+} from './assessmentValidation.js';
+import {
   ProviderRequestError,
   type ProviderAdapter,
   type ProviderCompletion,
@@ -36,6 +40,7 @@ const MAX_PROVIDER_TIMEOUT_MS = 120_000;
 
 export interface PreparedAssessment {
   job: Omit<CreateJobInput, 'batchId' | 'requestPayloadHash'>;
+  sentEvidenceRefIds: readonly string[];
   estimatedInputTokens: number;
   request: ProviderRequest;
 }
@@ -196,6 +201,26 @@ function retryDelay(
   }
   const exponential = Math.min(maxMs, baseMs * 2 ** (attemptNumber - 1));
   return Math.round(exponential * (0.5 + random() * 0.5));
+}
+
+function areSameReferenceSet(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (
+    left.some((reference) => typeof reference !== 'string' || reference.trim().length === 0) ||
+    right.some((reference) => typeof reference !== 'string' || reference.trim().length === 0)
+  ) {
+    return false;
+  }
+  const sortedLeft = [...new Set(left)].sort();
+  const sortedRight = [...new Set(right)].sort();
+  return (
+    sortedLeft.length === left.length &&
+    sortedRight.length === right.length &&
+    sortedLeft.length === sortedRight.length &&
+    sortedLeft.every((reference, index) => reference === sortedRight[index])
+  );
 }
 
 function canonicalSerialize(value: unknown): string {
@@ -792,6 +817,9 @@ export class BoundedAssessmentScheduler {
     if (prepared.job.ruleIds.length !== 1) {
       return 'Each assessment job must target exactly one rule.';
     }
+    if (!areSameReferenceSet(prepared.sentEvidenceRefIds, prepared.job.evidenceRefIds)) {
+      return 'The job evidence references must exactly match the dispatched context.';
+    }
     if (
       !Number.isSafeInteger(prepared.estimatedInputTokens) ||
       prepared.estimatedInputTokens <= 0
@@ -1067,7 +1095,12 @@ export class BoundedAssessmentScheduler {
           const { metadata } = error;
           const status = getAttemptStatus(metadata.kind);
           const transient = isRetryableTransient(error);
-          const attemptStatus = transient ? 'retryable_failed' : status;
+          const invalidProviderResponse = metadata.kind === 'malformed_response';
+          const attemptStatus = invalidProviderResponse
+            ? 'invalid_response'
+            : transient
+              ? 'retryable_failed'
+              : status;
           const updated = this.options.ledger.completeAttempt(
             job.jobId,
             attempt.attemptId,
@@ -1076,10 +1109,12 @@ export class BoundedAssessmentScheduler {
               providerRequestId: metadata.providerRequestId,
               httpStatus: metadata.statusCode,
               retryAfterMs: metadata.retryAfterMs,
-              errorClass: makeErrorClass(metadata.kind),
+              errorClass: invalidProviderResponse
+                ? 'malformed_response'
+                : makeErrorClass(metadata.kind),
               estimatedInputTokens: task.estimatedInputTokens,
               estimatedOutputTokens: task.request.maxOutputTokens,
-              validationStatus: 'not_run',
+              validationStatus: invalidProviderResponse ? 'invalid' : 'not_run',
             },
           );
           if (status === 'blocked') {
@@ -1113,7 +1148,11 @@ export class BoundedAssessmentScheduler {
             job = updated;
             continue;
           }
-          return toOutcome(task.batchId, updated);
+          return toOutcome(
+            task.batchId,
+            updated,
+            invalidProviderResponse ? 'malformed_provider_response' : undefined,
+          );
         }
         const updated = this.options.ledger.completeAttempt(
           job.jobId,
@@ -1173,7 +1212,10 @@ export class BoundedAssessmentScheduler {
             outputTokens: completion.usage.outputTokens,
             estimatedInputTokens: task.estimatedInputTokens,
             estimatedOutputTokens: task.request.maxOutputTokens,
-            errorClass: `incomplete_${completion.reason}`,
+            errorClass:
+              completion.reason === 'unsupported'
+                ? 'unsupported_finish_reason'
+                : `incomplete_${completion.reason}`,
             validationStatus: 'invalid',
           },
         );
@@ -1182,9 +1224,9 @@ export class BoundedAssessmentScheduler {
 
       let parsed: unknown;
       try {
-        parsed = JSON.parse(completion.text) as unknown;
+        parsed = parseAssessmentResponse(completion.text);
       } catch (error) {
-        if (!(error instanceof SyntaxError)) {
+        if (!(error instanceof AssessmentValidationError)) {
           throw error;
         }
         const updated = this.options.ledger.completeAttempt(
@@ -1198,7 +1240,7 @@ export class BoundedAssessmentScheduler {
             outputTokens: completion.usage.outputTokens,
             estimatedInputTokens: task.estimatedInputTokens,
             estimatedOutputTokens: task.request.maxOutputTokens,
-            errorClass: 'invalid_json',
+            errorClass: error.failure,
             validationStatus: 'invalid',
           },
         );
@@ -1209,8 +1251,7 @@ export class BoundedAssessmentScheduler {
       try {
         normalized = this.options.ledger.validateResult(job.jobId, parsed);
       } catch (error) {
-        if (!(error instanceof TypeError) && !(error instanceof RangeError) &&
-            !(error instanceof Error && error.message.startsWith('Unsupported assessment result schema version:'))) {
+        if (!(error instanceof AssessmentValidationError)) {
           throw error;
         }
         const updated = this.options.ledger.completeAttempt(
@@ -1224,7 +1265,7 @@ export class BoundedAssessmentScheduler {
             outputTokens: completion.usage.outputTokens,
             estimatedInputTokens: task.estimatedInputTokens,
             estimatedOutputTokens: task.request.maxOutputTokens,
-            errorClass: 'assessment_validation_failed',
+            errorClass: error.failure,
             validationStatus: 'invalid',
           },
         );

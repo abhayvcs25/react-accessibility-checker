@@ -62,6 +62,7 @@ export type ProviderCompletion =
         | 'content_filter'
         | 'tool_call'
         | 'provider_incomplete'
+        | 'unsupported'
         | 'unknown';
     });
 
@@ -75,6 +76,7 @@ export type ProviderErrorKind =
   | 'unavailable'
   | 'authentication'
   | 'invalid_request'
+  | 'malformed_response'
   | 'transport'
   | 'unknown';
 

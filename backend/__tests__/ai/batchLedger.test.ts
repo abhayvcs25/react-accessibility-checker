@@ -61,7 +61,7 @@ function validAssessment(
     status: 'potential_issue',
     explanation: 'A visible text/background contrast issue was detected.',
     evidenceRefs: ['evidence-1'],
-    confidence: null,
+    confidence: 0.8,
     providerId: 'groq',
     modelId: 'openai/gpt-oss-20b',
     ...overrides,

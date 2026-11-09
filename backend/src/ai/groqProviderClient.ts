@@ -140,7 +140,7 @@ function parseUsage(value: unknown): ProviderTokenUsage {
       count < 0
     ) {
       throw requestError(
-        'invalid_request',
+        'malformed_response',
         'Groq returned malformed usage data.',
       );
     }
@@ -162,7 +162,7 @@ function parseCompletionBody(
     value.choices.length === 0
   ) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Groq returned a malformed or empty completion.',
       { providerRequestId: responseRequestId },
     );
@@ -177,7 +177,7 @@ function parseCompletionBody(
       choice.finish_reason !== null)
   ) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Groq returned a malformed completion.',
       { providerRequestId: responseRequestId },
     );
@@ -185,7 +185,7 @@ function parseCompletionBody(
   const text = choice.message.content ?? '';
   if (text.trim().length === 0) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Groq returned an empty completion.',
       { providerRequestId: responseRequestId },
     );
@@ -207,7 +207,7 @@ function parseCompletionBody(
       JSON.parse(text);
     } catch {
       throw requestError(
-        'invalid_request',
+        'malformed_response',
         'Groq returned invalid JSON for a strict-schema request.',
         { providerRequestId },
       );
@@ -221,7 +221,9 @@ function parseCompletionBody(
         ? 'content_filter'
         : finishReason === 'tool_calls' || finishReason === 'function_call'
           ? 'tool_call'
-          : 'provider_incomplete';
+          : finishReason === null
+            ? 'provider_incomplete'
+            : 'unsupported';
   return { ...common, status: 'incomplete', text, reason };
 }
 
@@ -230,7 +232,7 @@ async function readJson(response: Response): Promise<unknown> {
     return await response.json();
   } catch {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Groq returned a non-JSON or malformed response.',
       { statusCode: response.status },
     );

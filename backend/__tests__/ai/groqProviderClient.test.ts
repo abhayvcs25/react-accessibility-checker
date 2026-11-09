@@ -219,6 +219,7 @@ describe('Groq provider adapter', () => {
   it.each([
     ['content_filter', 'content_filter'],
     ['tool_calls', 'tool_call'],
+    ['new_provider_finish_reason', 'unsupported'],
   ] as const)(
     'normalizes the %s finish reason as incomplete',
     async (finishReason, reason) => {
@@ -249,6 +250,31 @@ describe('Groq provider adapter', () => {
     },
   );
 
+  it('treats a missing finish reason as incomplete rather than complete', async () => {
+    const fetcher = createFetch(
+      jsonResponse(
+        completion({
+          choices: [
+            {
+              finish_reason: null,
+              message: { content: '{"passed":true}' },
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await createGroqProviderAdapter({
+      fetcher,
+      environment: { GROQ_API_KEY: apiKey },
+    }).complete(makeRequest('openai/gpt-oss-20b'));
+
+    expect(result).toMatchObject({
+      status: 'incomplete',
+      reason: 'provider_incomplete',
+      finishReason: null,
+    });
+  });
+
   it.each([
     ['missing choices', { choices: [] }],
     [
@@ -265,7 +291,7 @@ describe('Groq provider adapter', () => {
     await expect(
       adapter.complete(makeRequest('openai/gpt-oss-20b')),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request' },
+      metadata: { kind: 'malformed_response' },
     });
   });
 
@@ -281,7 +307,7 @@ describe('Groq provider adapter', () => {
     await expect(
       adapter.complete(makeRequest('openai/gpt-oss-20b')),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request', statusCode: 200 },
+      metadata: { kind: 'malformed_response', statusCode: 200 },
     });
   });
 
@@ -406,7 +432,7 @@ describe('Groq provider adapter', () => {
     await expect(
       adapter.complete(makeRequest('openai/gpt-oss-20b')),
     ).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request' },
+      metadata: { kind: 'malformed_response' },
       message: 'Groq returned invalid JSON for a strict-schema request.',
     });
   });

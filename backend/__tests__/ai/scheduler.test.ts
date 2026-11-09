@@ -26,6 +26,7 @@ import {
   type SchedulerOptions,
   type ScheduledAssessment,
 } from '../../src/ai/scheduler.js';
+import { MAX_ASSESSMENT_RESPONSE_BYTES } from '../../src/ai/assessmentValidation.js';
 
 let temporaryDirectory: string;
 let ledger: BatchLedger;
@@ -106,6 +107,7 @@ function makeAssessment(
           schemaVersion: 'schema-v1',
           modelConfigHash: hash(model.modelId),
         },
+        sentEvidenceRefIds: ['evidence-1'],
         estimatedInputTokens: 100,
         request,
       };
@@ -635,8 +637,103 @@ describe('bounded AI assessment scheduler', () => {
 
     expect(job?.status).toBe('invalid_response');
     expect(job?.result).toBeNull();
-    expect(job?.errorClass).toBe('assessment_validation_failed');
+    expect(job?.errorClass).toBe('semantic_invalid');
     expect(ledger.getAssessmentResult(job!.jobId)).toBeUndefined();
+  });
+
+  it.each([
+    ['malformed_json', 'not-json'],
+    ['output_too_large', ' '.repeat(MAX_ASSESSMENT_RESPONSE_BYTES + 1)],
+  ])('persists %s as a distinct invalid-response outcome', async (failure, text) => {
+    enableModel('openai/gpt-oss-20b');
+    const groq = adapter('groq', (request) => ({
+      ...createCompletion(request),
+      text,
+    }));
+    const result = await scheduler({ groq }).run([
+      {
+        batch: batchInput(`validation-${failure}`),
+        assessments: [makeAssessment(`target-${failure}`)],
+      },
+    ]);
+
+    expect(result.jobs[0]).toMatchObject({
+      status: 'invalid_response',
+      errorClass: failure,
+    });
+    expect(ledger.getAssessmentResult(result.jobs[0]!.jobId)).toBeUndefined();
+  });
+
+  it('classifies incomplete and unsupported finish reasons without parsing them as success', async () => {
+    enableModel('openai/gpt-oss-20b');
+    const groq = adapter('groq', (request) => ({
+      ...createCompletion(request),
+      status: 'incomplete',
+      reason: 'unsupported',
+      finishReason: 'future_finish_state',
+    }));
+    const result = await scheduler({ groq }).run([
+      {
+        batch: batchInput('unsupported-finish-project'),
+        assessments: [makeAssessment('unsupported-target')],
+      },
+    ]);
+
+    expect(result.jobs[0]).toMatchObject({
+      status: 'invalid_response',
+      errorClass: 'unsupported_finish_reason',
+    });
+  });
+
+  it('keeps malformed provider envelopes distinct from invalid assessment JSON', async () => {
+    enableModel('openai/gpt-oss-20b');
+    const groq = adapter('groq', () => {
+      throw new ProviderRequestError('malformed provider response', {
+        providerId: 'groq',
+        kind: 'malformed_response',
+        retryable: false,
+        statusCode: 200,
+        providerCode: null,
+        retryAfterMs: null,
+        providerRequestId: null,
+      });
+    });
+    const result = await scheduler({ groq }).run([
+      {
+        batch: batchInput('malformed-envelope-project'),
+        assessments: [makeAssessment('malformed-envelope-target')],
+      },
+    ]);
+
+    expect(result.jobs[0]).toMatchObject({
+      status: 'invalid_response',
+      errorClass: 'malformed_response',
+      detail: 'malformed_provider_response',
+    });
+  });
+
+  it('rejects prepared evidence references that differ from the dispatched context', async () => {
+    enableModel('openai/gpt-oss-20b');
+    const base = makeAssessment('evidence-mismatch-target');
+    const assessment: ScheduledAssessment = {
+      prepare(model) {
+        return {
+          ...base.prepare(model),
+          sentEvidenceRefIds: [],
+        };
+      },
+    };
+    const groq = adapter('groq');
+    const result = await scheduler({ groq }).run([
+      {
+        batch: batchInput('evidence-mismatch-project'),
+        assessments: [assessment],
+      },
+    ]);
+
+    expect(result.preflightIssues[0]?.detail).toContain('exactly match');
+    expect(result.batches[0]?.plannedJobCount).toBe(0);
+    expect(groq.complete).not.toHaveBeenCalled();
   });
 
   it('rejects over-context requests before creating jobs or calling providers', async () => {

@@ -113,7 +113,7 @@ function parseUsage(value: unknown): ProviderTokenUsage {
   }
   if (!isRecord(value)) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Cloudflare returned malformed usage data.',
     );
   }
@@ -144,7 +144,7 @@ function parseUsage(value: unknown): ProviderTokenUsage {
       count < 0
     ) {
       throw requestError(
-        'invalid_request',
+        'malformed_response',
         'Cloudflare returned malformed usage data.',
       );
     }
@@ -166,7 +166,7 @@ function parseCompletion(
     value.choices.length === 0
   ) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Cloudflare returned a malformed or empty completion.',
       { providerRequestId: responseRequestId },
     );
@@ -181,7 +181,7 @@ function parseCompletion(
       choice.finish_reason !== null)
   ) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Cloudflare returned a malformed completion.',
       { providerRequestId: responseRequestId },
     );
@@ -189,7 +189,7 @@ function parseCompletion(
   const text = choice.message.content ?? '';
   if (text.trim().length === 0) {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Cloudflare returned an empty completion.',
       { providerRequestId: responseRequestId },
     );
@@ -210,7 +210,7 @@ function parseCompletion(
       JSON.parse(text);
     } catch {
       throw requestError(
-        'invalid_request',
+        'malformed_response',
         'Cloudflare returned invalid JSON for a JSON Schema request.',
         { providerRequestId },
       );
@@ -225,7 +225,9 @@ function parseCompletion(
         ? 'content_filter'
         : finishReason === 'tool_calls' || finishReason === 'function_call'
           ? 'tool_call'
-          : 'provider_incomplete';
+          : finishReason === null
+            ? 'provider_incomplete'
+            : 'unsupported';
   return { ...common, status: 'incomplete', text, reason };
 }
 
@@ -350,7 +352,7 @@ async function readJson(response: Response): Promise<unknown> {
     return await response.json();
   } catch {
     throw requestError(
-      'invalid_request',
+      'malformed_response',
       'Cloudflare returned a non-JSON or malformed response.',
       { statusCode: response.status },
     );
@@ -498,7 +500,7 @@ export function createCloudflareProviderAdapter(
         } catch {
           if (response.ok) {
             throw requestError(
-              'invalid_request',
+              'malformed_response',
               'Cloudflare returned a non-JSON or malformed response.',
               { statusCode: response.status },
             );
