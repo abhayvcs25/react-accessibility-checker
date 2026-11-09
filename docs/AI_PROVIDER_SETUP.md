@@ -60,3 +60,10 @@ The `/api/ai/health` endpoint reports `migration_pending`. The
 `/api/ai/usage` endpoint is read-only and exposes historical JSON-ledger data;
 it does not indicate current provider eligibility, current usage, or a
 zero-cost guarantee.
+
+The durable batch/job ledger uses Node.js built-in `node:sqlite` and requires
+Node.js 24.11.0 or later. SQLite is experimental in this Node release.
+Terminal job, attempt, and normalized-result records are retained for seven
+days by default (`USAGE_LEDGER_RETENTION_DAYS`); active jobs are not removed.
+The existing JSON usage ledger and `/api/ai/usage` data remain unchanged and
+are not imported or deleted. Raw provider response bodies are not stored.

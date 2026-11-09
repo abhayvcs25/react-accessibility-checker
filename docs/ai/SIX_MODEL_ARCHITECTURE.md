@@ -170,13 +170,11 @@ limited to active, reviewed rules and their available evidence.
 ### Recommendation
 
 Use one local SQLite database as the durable source of truth for AI batches,
-jobs, responses, and token accounting, replacing the existing JSON ledger only
-after a one-time migration and parity tests. Do not keep a second independently
-updated usage store. The audit found no existing database and established that
-the JSON file is loaded into process memory and replaced from a per-process
-temporary file without a transaction, unique-key reservation, or
-cross-process lock. Those properties are insufficient for atomic
-idempotency if two backend processes schedule the same work.
+jobs, responses, and token accounting. The audit found no existing database
+and established that the JSON file is loaded into process memory and replaced
+from a per-process temporary file without a transaction, unique-key
+reservation, or cross-process lock. Those properties are insufficient for
+atomic idempotency if two backend processes schedule the same work.
 
 The deployment model is not known. If the owner explicitly guarantees one
 backend process and no concurrent writers across restarts, a transactional
@@ -208,15 +206,24 @@ Commit a successful attempt's validated `assessment_results` row and the job's
 terminal state/result reference in one transaction. Preserve validation and
 error metadata on unsuccessful attempts without converting them into result
 rows; raw response bodies remain optional, short-lived, and disabled by default.
-Do not store API keys. Raw provider response retention is disabled by default;
-if explicitly enabled for debugging, redact sensitive data and automatically
-delete it within seven days.
+Do not store API keys. Raw provider response retention is disabled.
 
-The migration must preserve readable historical metrics from
-`RAC_AI_USAGE_FILE`/`ai-usage.json` and the existing `/api/ai/usage` response
-shape. Import once, idempotently; do not erase or reset the JSON file during
-migration. Keep it as a backup until the new ledger and reporting tests pass
-and an operator approves removal.
+The approved Prompt 09 implementation decision uses Node.js built-in
+`node:sqlite` (`DatabaseSync`) with Node.js 24.11.0 or later. Durable terminal
+job, attempt, and normalized result data is retained for seven days from job
+completion, configurable with `USAGE_LEDGER_RETENTION_DAYS` (default `7`).
+Expired terminal jobs and their attempts/results are deleted automatically;
+active jobs are never deleted by retention cleanup. Raw provider response
+bodies remain disabled. The existing JSON usage ledger is preserved without
+automatic import, modification, or deletion; it continues to serve the legacy
+usage reporting API separately from the new batch ledger until a later
+explicitly approved consolidation.
+
+The existing JSON usage ledger at `RAC_AI_USAGE_FILE`/`ai-usage.json` and the
+existing `/api/ai/usage` response shape are preserved unchanged. The approved
+Prompt 09 scope does not import, migrate, or delete historical JSON usage. Any
+future consolidation into SQLite requires a separate approved, idempotent
+migration with parity tests and an operator-approved backup/removal step.
 
 SQLite transactions should reserve a job idempotency key before enqueueing,
 append each attempt before network I/O, and commit its terminal state and
@@ -229,14 +236,15 @@ queue is not a substitute for the database uniqueness constraint.
 Exact evidence and responses may contain user source content. Store context
 hashes and evidence-reference IDs rather than duplicating full source content
 wherever possible; do not retain raw assessment requests by default. Keep
-normalized structured assessment responses and necessary metadata for 90 days,
-then automatically delete linked project/snapshot, batch, job, attempt, and
-result records. Project-level deletion must also cascade immediately. Raw
-provider response retention is disabled by default; if temporarily required
-for debugging, redact sensitive data and automatically delete it within seven
-days. Do not log raw context or responses. Restrict the database to the local
-application user and verify Windows file permissions in implementation rather
-than assuming Unix file-mode behavior.
+normalized structured assessment responses and necessary terminal job/attempt
+metadata for seven days from job completion, configurable with
+`USAGE_LEDGER_RETENTION_DAYS` (default `7`); then automatically delete expired
+terminal job records and their attempts/results. Active jobs are not removed
+by retention cleanup. Project-level deletion must also cascade immediately.
+Raw provider response retention is disabled. Do not log raw context or
+responses. Restrict the database to the local application user and verify
+Windows file permissions in implementation rather than assuming Unix file-mode
+behavior.
 
 ## 5. Deterministic idempotency and job state
 
