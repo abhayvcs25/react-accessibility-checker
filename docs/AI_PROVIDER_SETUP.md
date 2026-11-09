@@ -77,3 +77,13 @@ explicit operation: it only recovers expired work when its recorded owner is
 confirmed absent on the same host. Ownerless legacy attempts and unknown-host
 owners are left untouched. Recovery is not enabled at startup and is not
 integrated with a scheduler.
+
+Prompt 10 adds a bounded scheduler module with mocked tests, but it is not
+connected to an API route or the IBM assessment flow. It requires prebuilt,
+context-bounded requests and reserves configured rate/token budgets before
+dispatch. Cloudflare Neuron reservations use the shared 10,000-Neuron daily
+limit and recent SQLite attempt usage; they do not include provider usage from
+outside this application. All six models remain blocked and
+operator-disabled, so the scheduler currently reports blocked models and makes
+no provider calls. No API credentials, live requests, or runtime checks are
+required for its tests.

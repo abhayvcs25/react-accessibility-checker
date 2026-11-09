@@ -36,7 +36,7 @@ file. The JSON ledger continues to serve the legacy usage endpoint separately.
 |---|---|---|
 | IBM | `checker.ts` runs IBM Equal Access and returns its findings/counts. Tests protect those results when contextual analysis fails. | Keep the IBM pipeline, output shape, rules, severity, and counts unchanged. |
 | Extraction | The production route accepts one HTML file and uses V2 extraction/adaptation. A separate utility accepts caller-supplied HTML documents. | Reuse current extraction. Add a future source adapter for React projects/URLs; do not claim it exists now. |
-| AI execution | Production uses one selected Gemini/OpenRouter model. The six-entry benchmark is serial and is not the target scheduler. | Independently configured Groq and Cloudflare model adapters, scheduled as bounded jobs. |
+| AI execution | Legacy selected-model execution has been retired. Mock-tested provider adapters and a bounded scheduler module exist, but contextual AI remains disabled and no request path invokes them. The six-entry benchmark is serial. | Independently configured Groq and Cloudflare model adapters, scheduled as bounded jobs. |
 | Rules | Three contextual rules are active. Twenty rule definitions are proposed, not implemented as a complete assessment set. | Keep a versioned rule registry; only schedule rules with reviewed definitions and available evidence. |
 | Persistence | `backend/src/ai/usage.ts` stores historical metrics in a JSON file. Prompt 09 adds a separate SQLite batch/job ledger; no usage migration is performed. | Keep job idempotency and attempts in SQLite; preserve the JSON usage endpoint unchanged unless a separately approved migration is undertaken. |
 | Verification | Provider documentation and operator-reported account evidence are recorded in the verification report. No candidate has runtime verification. | Require fail-closed eligibility and separate documentation, account, and runtime evidence. Local tests use mocks only. |
@@ -356,6 +356,47 @@ timeout/disconnect after dispatch with no definitive provider response is
 `unknown_outcome`, not an automatic retry. Persist every attempt before
 deciding whether to schedule another.
 
+### Prompt 10 scheduler implementation status
+
+`backend/src/ai/scheduler.ts` implements the bounded orchestration contract,
+but is not connected to an API route or the IBM assessment flow. It requires a
+prebuilt request, a positive token estimate, and a model-specific ledger job;
+it requires exactly one rule per job and derives `requestPayloadHash` from the
+canonical request messages, model, output cap, and response format/schema. It
+rejects requests that exceed the verified context/input or application output
+cap before creating a job. The default limits are six total requests,
+three per provider, and one per model, with round-robin batch dispatch, a
+300-job queue cap, a 120-second request-timeout ceiling, and two total
+attempts. A runnable job from another batch gets dispatch priority before the
+scheduler returns to a batch with queued work. `Retry-After` is honored as
+supplied; exponential backoff is bounded when the provider gives no delay.
+
+The scheduler reserves model-specific RPM/RPD/TPM/TPD limits before
+dispatch. Its reservations share a per-ledger scheduler coordinator, seed from
+the last 24 hours of SQLite attempt usage (actual usage when complete, otherwise
+the stored estimate), and retain conservative estimates when providers omit
+usage. Cloudflare requests also reserve against the published shared
+10,000-Neuron daily allocation using the model's published input/output rates.
+Reservations are local to the single backend ledger coordinator; this is not a
+distributed or cross-host budget lock, and other dashboard/API consumers of
+the same provider allocation are not visible to it.
+
+Only explicit rate-limit and provider-unavailable errors marked retryable are
+retried, with bounded attempts and `Retry-After`. Timeouts, disconnects,
+cancellation after dispatch, and unknown adapter failures are persisted as
+`unknown_outcome`; they are not resent automatically. Quota exhaustion pauses
+that provider for the run, while billing/deprecation failures pause only the
+affected model. Successful JSON is validated by the ledger against the
+assessment schema, job identity, permitted rules, and evidence references
+before persistence.
+
+All six catalog entries are currently blocked and operator-disabled.
+Consequently, a normal scheduler run records zero planned model jobs, reports
+each blocked candidate, and makes no adapter calls. No provider request,
+runtime verification, startup recovery, or scheduler/API integration was
+performed for Prompt 10. The shared Neuron guard is implemented for scheduler
+dispatch but does not account for usage outside this application.
+
 ## 7. Provider adapters and common assessment validation
 
 Adapters must own endpoint/request details, authentication, timeout/abort,
@@ -460,10 +501,11 @@ that the account's plan and billing settings determine actual cost.
 4. **Provider adapters:** Add mocked Groq and Cloudflare adapter tests for
    request shape, schema support gating, usage, finish reasons, errors,
    `Retry-After`, and secret-safe diagnostics. No live inference.
-5. **Scheduler and validation:** A future scheduler phase may add bounded
-   concurrency, partial failures, and provider integration. Prompt 09.1 adds
-   ownership-safe explicit recovery and trusted result validation, but neither
-   startup recovery nor scheduler integration is enabled.
+5. **Scheduler and validation:** Prompt 10 adds a bounded, mocked-testable
+   scheduler module with partial outcomes and token-budget reservations.
+   Contextual AI/API integration remains disabled. Prompt 09.1 adds
+   ownership-safe explicit recovery and trusted result validation; neither
+   startup nor scheduler-triggered recovery is enabled.
 6. **Report integration:** Add AI aggregation and the fixing-prompt output
    separately from IBM. Run existing IBM tests unchanged.
 7. **Retire legacy AI:** Prompts 04–05 retired the local Qwen and selected
@@ -513,12 +555,11 @@ available and unchanged.
 
 ## Completion status
 
-This document records the design-only state as of 2026-11-04; no application
-source, tests, manifests, provider settings, or `prompt.txt` were changed during
-that design pass. The human subsequently approved the architecture and
-approved prompts 04–05 retired the local Qwen and legacy selected-model
-execution paths while preserving shared evidence extraction, IBM, and
-historical usage reporting. Prompt 09 uses built-in SQLite and retains the
-separate JSON usage ledger. Provider eligibility and runtime verification
-remain incomplete. No provider API call, live connection check, or inference
-was performed.
+This document records the original design state as of 2026-11-04 and subsequent
+approved implementation phases. Prompts 04–05 retired the local Qwen and legacy
+selected-model execution paths while preserving shared evidence extraction,
+IBM, and historical usage reporting. Prompt 09 uses built-in SQLite and retains
+the separate JSON usage ledger. Prompt 10 adds a scheduler module and mocked
+tests, without wiring it into the assessment/API path. Provider eligibility and
+runtime verification remain incomplete. No provider API call, live connection
+check, or inference was performed.

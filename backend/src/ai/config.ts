@@ -48,7 +48,8 @@ export const AI_PROVIDERS = {
       freeAllocationResetsAtUtc: '00:00',
       paidOverageUsdPerThousandNeurons: 0.011,
       freeAllocationExhaustionBehavior: 'provider_rejects_requests',
-      applicationFreeAllocationGuard: 'not_implemented',
+      applicationFreeAllocationGuard:
+        'scheduler_estimate_and_ledger_reservation_not_integrated',
       scope: 'task-level-default-and-conditional-free-allocation',
     },
     accountVerification: {

@@ -139,6 +139,16 @@ export interface AttemptRecord {
   validationStatus: ValidationStatus;
 }
 
+export interface BudgetHistoryRecord {
+  providerId: AiProviderId;
+  modelId: CandidateModelId;
+  requestStartedAt: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  estimatedInputTokens: number | null;
+  estimatedOutputTokens: number | null;
+}
+
 export interface AssessmentResultRecord {
   resultId: string;
   jobId: string;
@@ -152,6 +162,8 @@ export interface AssessmentResultRecord {
 export interface BeginAttemptOptions {
   retryRequested?: boolean;
   acknowledgePossibleDuplicate?: boolean;
+  estimatedInputTokens?: number;
+  estimatedOutputTokens?: number;
 }
 
 export interface CompleteAttemptInput {
@@ -906,6 +918,8 @@ export class BatchLedger {
     options: BeginAttemptOptions = {},
   ): AttemptRecord {
     requiredText(jobId, 'jobId');
+    assertTokenCount(options.estimatedInputTokens, 'estimatedInputTokens');
+    assertTokenCount(options.estimatedOutputTokens, 'estimatedOutputTokens');
     const now = Date.now();
     const attemptId = randomUUID();
     this.transaction(() => {
@@ -945,15 +959,18 @@ export class BatchLedger {
         .prepare(
           `INSERT INTO attempts (
              attempt_id, job_id, attempt_number, status, request_started_at,
+             estimated_input_tokens, estimated_output_tokens,
              validation_status, owner_process_id, owner_host, owner_instance_id,
              lease_expires_at
-           ) VALUES (?, ?, ?, 'in_progress', ?, 'not_run', ?, ?, ?, ?);`,
+           ) VALUES (?, ?, ?, 'in_progress', ?, ?, ?, 'not_run', ?, ?, ?, ?);`,
         )
         .run(
           attemptId,
           jobId,
           attemptNumber,
           now,
+          options.estimatedInputTokens ?? null,
+          options.estimatedOutputTokens ?? null,
           this.ownerProcessId,
           this.ownerHost,
           this.ownerInstanceId,
@@ -1072,7 +1089,8 @@ export class BatchLedger {
       }
       const attempt = this.database
         .prepare(
-          `SELECT status, owner_process_id, owner_host, owner_instance_id
+          `SELECT status, owner_process_id, owner_host, owner_instance_id,
+                  estimated_input_tokens, estimated_output_tokens
            FROM attempts WHERE attempt_id = ? AND job_id = ?;`,
         )
         .get(attemptId, jobId) as DatabaseRow | undefined;
@@ -1086,6 +1104,12 @@ export class BatchLedger {
       ) {
         throw new Error('The attempt is no longer owned by this ledger process.');
       }
+      const estimatedInputTokens =
+        input.estimatedInputTokens ??
+        toNullableNumber(attempt.estimated_input_tokens);
+      const estimatedOutputTokens =
+        input.estimatedOutputTokens ??
+        toNullableNumber(attempt.estimated_output_tokens);
 
       let normalizedResultJson: string | null = null;
       if (isSuccess) {
@@ -1145,8 +1169,8 @@ export class BatchLedger {
           input.errorClass ?? null,
           input.inputTokens ?? null,
           input.outputTokens ?? null,
-          input.estimatedInputTokens ?? null,
-          input.estimatedOutputTokens ?? null,
+          estimatedInputTokens,
+          estimatedOutputTokens,
           input.validationStatus,
           attemptId,
         );
@@ -1183,8 +1207,8 @@ export class BatchLedger {
           input.validationStatus,
           input.inputTokens ?? null,
           input.outputTokens ?? null,
-          input.estimatedInputTokens ?? null,
-          input.estimatedOutputTokens ?? null,
+          estimatedInputTokens,
+          estimatedOutputTokens,
           input.errorClass ?? null,
           input.retryAfterMs ?? null,
           jobId,
@@ -1234,6 +1258,44 @@ export class BatchLedger {
       .prepare('SELECT * FROM jobs WHERE idempotency_key = ?;')
       .get(idempotencyKey) as DatabaseRow | undefined;
     return row ? this.toJobRecord(row) : undefined;
+  }
+
+  validateResult(jobId: string, value: unknown): JsonValue {
+    this.assertOpen();
+    const job = this.database
+      .prepare(
+        `SELECT component_id, provider_id, model_id, schema_version
+         FROM jobs WHERE job_id = ?;`,
+      )
+      .get(jobId) as DatabaseRow | undefined;
+    if (!job) {
+      throw new Error('The AI job was not found.');
+    }
+    const ruleIds = new Set(
+      (
+        this.database
+          .prepare('SELECT rule_id FROM job_rules WHERE job_id = ?;')
+          .all(jobId) as DatabaseRow[]
+      ).map((rule) => toText(rule.rule_id)),
+    );
+    const evidenceRefIds = new Set(
+      (
+        this.database
+          .prepare('SELECT evidence_ref_id FROM job_evidence_refs WHERE job_id = ?;')
+          .all(jobId) as DatabaseRow[]
+      ).map((reference) => toText(reference.evidence_ref_id)),
+    );
+    return validateAssessmentResult(
+      value,
+      {
+        componentId: toText(job.component_id),
+        providerId: toText(job.provider_id),
+        modelId: toText(job.model_id),
+        schemaVersion: toText(job.schema_version),
+      },
+      ruleIds,
+      evidenceRefIds,
+    );
   }
 
   private toJobRecord(row: DatabaseRow): JobRecord {
@@ -1300,6 +1362,34 @@ export class BatchLedger {
       estimatedInputTokens: toNullableNumber(row.estimated_input_tokens),
       estimatedOutputTokens: toNullableNumber(row.estimated_output_tokens),
       validationStatus: toText(row.validation_status) as ValidationStatus,
+    }));
+  }
+
+  getBudgetHistory(since: number): BudgetHistoryRecord[] {
+    this.assertOpen();
+    if (!Number.isSafeInteger(since) || since < 0) {
+      throw new RangeError('The budget-history start time must be a non-negative integer.');
+    }
+    return (
+      this.database
+        .prepare(
+          `SELECT jobs.provider_id, jobs.model_id, attempts.request_started_at,
+                  attempts.input_tokens, attempts.output_tokens,
+                  attempts.estimated_input_tokens, attempts.estimated_output_tokens
+           FROM attempts
+           INNER JOIN jobs ON jobs.job_id = attempts.job_id
+           WHERE attempts.request_started_at >= ?
+           ORDER BY attempts.request_started_at;`,
+        )
+        .all(since) as DatabaseRow[]
+    ).map((row) => ({
+      providerId: toText(row.provider_id) as AiProviderId,
+      modelId: toText(row.model_id) as CandidateModelId,
+      requestStartedAt: toNumber(row.request_started_at),
+      inputTokens: toNullableNumber(row.input_tokens),
+      outputTokens: toNullableNumber(row.output_tokens),
+      estimatedInputTokens: toNullableNumber(row.estimated_input_tokens),
+      estimatedOutputTokens: toNullableNumber(row.estimated_output_tokens),
     }));
   }
 
