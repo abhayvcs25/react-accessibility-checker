@@ -7,6 +7,8 @@ const {
   getConfigUnsupported,
   extractHtmlContextResultV2,
   adaptContextSnapshotV2Mock,
+  runContextualAssessmentJobs,
+  closeContextualAssessmentScheduler,
 } =
   vi.hoisted(() => ({
     close: vi.fn(),
@@ -14,6 +16,8 @@ const {
     getConfigUnsupported: vi.fn(),
     extractHtmlContextResultV2: vi.fn(),
     adaptContextSnapshotV2Mock: vi.fn(),
+    runContextualAssessmentJobs: vi.fn(),
+    closeContextualAssessmentScheduler: vi.fn(),
   }));
 
 vi.mock('accessibility-checker', () => ({
@@ -28,6 +32,11 @@ vi.mock('../../src/services/contextExtractionV2.js', () => ({
 
 vi.mock('../../src/services/contextAdapterV2.js', () => ({
   adaptContextSnapshotV2: adaptContextSnapshotV2Mock,
+}));
+
+vi.mock('../../src/services/contextualAssessmentScheduler.js', () => ({
+  runContextualAssessmentJobs,
+  closeContextualAssessmentScheduler,
 }));
 
 const html = '<main><img src="photo.png"></main>';
@@ -109,6 +118,9 @@ describe('analyzeHtml context extraction integration', () => {
         'manual',
       ],
     });
+    runContextualAssessmentJobs.mockReset().mockResolvedValue({
+      outcomes: [],
+    });
   });
 
   it('extracts context while preserving the IBM input, findings, and response contract', async () => {
@@ -146,14 +158,56 @@ describe('analyzeHtml context extraction integration', () => {
         modelLoaded: false,
         assessments: [],
       },
+      advisoryReport: {
+        status: 'not_run',
+        models: expect.arrayContaining([
+          expect.objectContaining({
+            modelId: 'openai/gpt-oss-120b',
+            status: 'blocked',
+            validatedCount: 0,
+          }),
+        ]),
+        jobs: [],
+        assessmentGroups: [],
+        findings: [],
+        fixingPrompt: null,
+      },
     });
     expect(Object.keys(response).sort()).toEqual([
+      'advisoryReport',
       'analyzedAt',
       'contextualAssessments',
       'filename',
       'issues',
       'summary',
     ]);
+    expect(response.summary).toEqual({
+      total: 1,
+      violations: 1,
+      potentialViolations: 0,
+      recommendations: 0,
+      potentialRecommendations: 0,
+      manual: 0,
+    });
+    expect(response.issues).toEqual([
+      {
+        ruleId: 'WCAG20_Img_HasAlt',
+        level: 'violation',
+        message: 'Image has no alternative text.',
+        path: '/html/body/main/img',
+        snippet: '<img src="photo.png">',
+        help: 'https://example.test/rule',
+      },
+    ]);
+    expect(response.advisoryReport.models).toHaveLength(6);
+    expect(
+      response.advisoryReport.models.every(
+        (model) =>
+          model.status === 'blocked' &&
+          model.validatedCount === 0 &&
+          model.jobCount === 0,
+      ),
+    ).toBe(true);
   });
 
   it('continues IBM analysis when context extraction throws', async () => {
@@ -182,6 +236,94 @@ describe('analyzeHtml context extraction integration', () => {
       expect(JSON.stringify(logError.mock.calls)).not.toContain(html);
       expect(JSON.stringify(logError.mock.calls)).not.toContain(
         'Failed to extract',
+      );
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it('keeps IBM results value-equivalent across AI execution states', async () => {
+    const success = {
+      jobId: 'job-success',
+      providerId: 'groq',
+      modelId: 'openai/gpt-oss-120b',
+      targetId: 'target-button',
+      componentRef: 'target-button',
+      ruleId: 'BUTTON-PURPOSE-CLARITY',
+      status: 'succeeded',
+      validationStatus: 'valid',
+      errorClass: null,
+      normalizedResult: {
+        targetId: 'target-button',
+        ruleId: 'BUTTON-PURPOSE-CLARITY',
+        status: 'potential_issue',
+        explanation: 'The available label does not explain the action.',
+        evidenceRefs: ['target-button'],
+        providerId: 'groq',
+        modelId: 'openai/gpt-oss-120b',
+      },
+      evidence: [{ id: 'target-button', text: 'Continue' }],
+    } as const;
+    const failure = {
+      ...success,
+      jobId: 'job-failed',
+      status: 'permanent_failed',
+      validationStatus: 'not_run',
+      errorClass: 'provider_authentication',
+      normalizedResult: null,
+    } as const;
+
+    const cases = [
+      ['disabled', { outcomes: [] }, 'not_run'],
+      ['blocked', { outcomes: [] }, 'not_run'],
+      ['successful with blocked peers', { outcomes: [success] }, 'partial'],
+      ['partially failed', { outcomes: [success, failure] }, 'partial'],
+    ] as const;
+
+    for (const [name, execution, expectedStatus] of cases) {
+      runContextualAssessmentJobs.mockResolvedValueOnce(execution);
+      const response = await analyzeHtml(html, filename);
+      expect(response.summary, name).toEqual({
+        total: 1,
+        violations: 1,
+        potentialViolations: 0,
+        recommendations: 0,
+        potentialRecommendations: 0,
+        manual: 0,
+      });
+      expect(response.issues, name).toEqual([
+        {
+          ruleId: 'WCAG20_Img_HasAlt',
+          level: 'violation',
+          message: 'Image has no alternative text.',
+          path: '/html/body/main/img',
+          snippet: '<img src="photo.png">',
+          help: 'https://example.test/rule',
+        },
+      ]);
+      expect(response.advisoryReport.status, name).toBe(expectedStatus);
+      if (name === 'partially failed') {
+        expect(response.advisoryReport.findings).toHaveLength(1);
+        expect(
+          response.advisoryReport.jobs.find((job) => job.jobId === 'job-failed'),
+        ).toMatchObject({
+          status: 'permanent_failed',
+          validationStatus: 'not_run',
+        });
+      }
+    }
+
+    runContextualAssessmentJobs.mockRejectedValueOnce(
+      new Error('private scheduler detail'),
+    );
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await analyzeHtml(html, filename);
+      expect(response.summary.total).toBe(1);
+      expect(response.issues[0]?.ruleId).toBe('WCAG20_Img_HasAlt');
+      expect(response.advisoryReport.status).toBe('failed');
+      expect(JSON.stringify(logError.mock.calls)).not.toContain(
+        'private scheduler detail',
       );
     } finally {
       logError.mockRestore();

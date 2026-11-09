@@ -83,6 +83,8 @@ export interface SchedulerJobOutcome {
   jobId: string;
   providerId: AiProviderId;
   modelId: CandidateModelId;
+  componentId: string;
+  ruleId: string;
   status: JobRecord['status'];
   errorClass: string | null;
   result: JsonValue | null;
@@ -552,6 +554,8 @@ function toOutcome(
     jobId: job.jobId,
     providerId: job.providerId,
     modelId: job.modelId,
+    componentId: job.componentId,
+    ruleId: job.ruleIds[0] ?? '',
     status: job.status,
     errorClass: job.errorClass,
     result: null,

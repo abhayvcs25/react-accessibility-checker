@@ -31,6 +31,16 @@ const responseBody = {
     modelLoaded: false,
     assessments: [],
   },
+  advisoryReport: {
+    status: 'not_run',
+    models: [],
+    jobs: [],
+    assessmentGroups: [],
+    findings: [],
+    fixingPrompt: null,
+    omittedJobCount: 0,
+    omittedPromptFindingCount: 0,
+  },
 };
 
 describe('POST /api/analyze', () => {

@@ -1,4 +1,10 @@
 import type { ContextRecordRef } from './contextV2.js';
+import type {
+  CandidateModelId,
+  AiProviderId,
+  ModelEligibility,
+} from '../ai/config.js';
+import type { JobStatus, ValidationStatus } from '../ai/batchLedger.js';
 
 /**
  * Types for the IBM accessibility-checker report structure
@@ -197,6 +203,103 @@ export interface ContextualAssessmentReport {
   errorCode?: string;
 }
 
+export type AdvisoryModelStatus =
+  | 'blocked'
+  | 'not_run'
+  | 'queued'
+  | 'in_progress'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'quota_limited';
+
+export interface AdvisoryModelReport {
+  providerId: AiProviderId;
+  modelId: CandidateModelId;
+  eligibility: ModelEligibility;
+  status: AdvisoryModelStatus;
+  reason?: string;
+  jobCount: number;
+  validatedCount: number;
+  invalidCount: number;
+  notValidatedCount: number;
+  failedCount: number;
+  quotaLimited: boolean;
+}
+
+export interface AdvisoryEvidence {
+  id: string;
+  text?: string;
+}
+
+export interface AdvisoryAssessment {
+  jobId: string;
+  providerId: AiProviderId;
+  modelId: CandidateModelId;
+  targetId: string;
+  componentRef: string;
+  domPath?: string;
+  ruleId: string;
+  status: ContextualAssessmentValue;
+  explanation: string;
+  evidence: AdvisoryEvidence[];
+  omittedEvidenceCount: number;
+  confidence?: number;
+}
+
+export interface AdvisoryEquivalentFinding {
+  status: ContextualAssessmentValue;
+  evidenceRefIds: string[];
+  omittedEvidenceCount: number;
+  modelCount: number;
+  jobIds: string[];
+}
+
+export interface AdvisoryFindingGroup {
+  targetId: string;
+  componentRef: string;
+  domPath?: string;
+  ruleId: string;
+  agreement:
+    | 'unanimous_issue'
+    | 'unanimous_no_issue'
+    | 'insufficient_context'
+    | 'disagreement';
+  issueCount: number;
+  validatedCount: number;
+  assessments: AdvisoryAssessment[];
+  equivalentFindings: AdvisoryEquivalentFinding[];
+  relatedIbmIssueIds: string[];
+  omittedIbmIssueCount: number;
+}
+
+export interface AdvisoryJobReport {
+  jobId: string;
+  providerId: AiProviderId;
+  modelId: CandidateModelId;
+  targetId: string;
+  componentRef: string;
+  ruleId: string;
+  status: JobStatus;
+  validationStatus: ValidationStatus;
+  errorClass: string | null;
+  providerRequestId: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  tokenUsageSource: 'provider' | 'estimated' | 'unknown';
+}
+
+export interface AdvisoryReport {
+  status: 'not_run' | 'queued' | 'in_progress' | 'completed' | 'partial' | 'failed';
+  models: AdvisoryModelReport[];
+  jobs: AdvisoryJobReport[];
+  assessmentGroups: AdvisoryFindingGroup[];
+  findings: AdvisoryFindingGroup[];
+  fixingPrompt: string | null;
+  omittedJobCount: number;
+  omittedPromptFindingCount: number;
+}
+
 /** The JSON response returned by POST /api/analyze on success. */
 export interface AnalyzeResponse {
   /** Echo of the scanned filename. */
@@ -209,6 +312,8 @@ export interface AnalyzeResponse {
   issues: AnalyzeIssue[];
   /** Experimental contextual assessments, separate from IBM findings and counts. */
   contextualAssessments: ContextualAssessmentReport;
+  /** Validated multi-model advisory results, separate from IBM findings and counts. */
+  advisoryReport: AdvisoryReport;
 }
 
 /** Standard error response body. */

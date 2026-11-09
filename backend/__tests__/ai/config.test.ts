@@ -5,6 +5,8 @@ import {
   MODEL_CANDIDATES,
   getEligibleModels,
   getProviderCredentials,
+  getProviderCredentialReadiness,
+  getServerOptInState,
   isCandidateEligible,
   isModelEligible,
   ModelNotEligibleError,
@@ -420,6 +422,79 @@ describe('shared model catalog', () => {
 });
 
 describe('server-side provider credentials', () => {
+  it('reports credential readiness without returning values', () => {
+    const readiness = [
+      getProviderCredentialReadiness('groq', {}),
+      getProviderCredentialReadiness('cloudflare-workers-ai', {
+        CLOUDFLARE_ACCOUNT_ID: 'test-account-id',
+      }),
+      getProviderCredentialReadiness('groq', {
+        GROQ_API_KEY: 'test-groq-secret-placeholder',
+      }),
+      getProviderCredentialReadiness('cloudflare-workers-ai', {
+        CLOUDFLARE_ACCOUNT_ID: 'test-account-id',
+        CLOUDFLARE_API_TOKEN: 'test-cloudflare-secret-placeholder',
+      }),
+    ];
+
+    expect(readiness).toEqual([
+      {
+        providerId: 'groq',
+        configured: false,
+        missing: ['GROQ_API_KEY'],
+      },
+      {
+        providerId: 'cloudflare-workers-ai',
+        configured: false,
+        missing: ['CLOUDFLARE_API_TOKEN'],
+      },
+      {
+        providerId: 'groq',
+        configured: true,
+        missing: [],
+      },
+      {
+        providerId: 'cloudflare-workers-ai',
+        configured: true,
+        missing: [],
+      },
+    ]);
+    expect(JSON.stringify(readiness)).not.toContain('test-groq-secret-placeholder');
+    expect(JSON.stringify(readiness)).not.toContain(
+      'test-cloudflare-secret-placeholder',
+    );
+    expect(JSON.stringify(readiness)).not.toContain('test-account-id');
+  });
+
+  it('keeps server opt-ins default-off and accepts only exact booleans', () => {
+    expect(getServerOptInState('RAC_CONTEXTUAL_AI_ENABLED', {})).toBe(
+      'disabled',
+    );
+    expect(getServerOptInState('RAC_AI_LIVE_TEST_ENABLED', {})).toBe(
+      'disabled',
+    );
+    expect(
+      getServerOptInState('RAC_AI_LIVE_TEST_ENABLED', {
+        RAC_AI_LIVE_TEST_ENABLED: 'true',
+      }),
+    ).toBe('enabled');
+    expect(
+      getServerOptInState('RAC_AI_LIVE_TEST_ENABLED', {
+        RAC_AI_LIVE_TEST_ENABLED: '1',
+      }),
+    ).toBe('invalid');
+  });
+
+  it('does not make blocked candidates eligible when credentials are present', () => {
+    expect(getEligibleModels()).toEqual([]);
+    expect(
+      getProviderCredentialReadiness('groq', {
+        GROQ_API_KEY: 'test-groq-secret-placeholder',
+      }).configured,
+    ).toBe(true);
+    expect(getEligibleModels()).toEqual([]);
+  });
+
   it('reports missing Groq credentials without returning a secret value', () => {
     expect(getProviderCredentials('groq', {})).toEqual({
       status: 'missing_credentials',

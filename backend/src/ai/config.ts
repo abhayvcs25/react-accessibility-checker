@@ -642,6 +642,53 @@ export function getProviderCredentials(
   };
 }
 
+export interface ProviderCredentialReadiness {
+  providerId: AiProviderId;
+  configured: boolean;
+  missing: readonly string[];
+}
+
+export function getProviderCredentialReadiness(
+  providerId: AiProviderId,
+  environment: NodeJS.ProcessEnv = process.env,
+): ProviderCredentialReadiness {
+  if (providerId === 'groq') {
+    const configured = Boolean(environment.GROQ_API_KEY?.trim());
+    return {
+      providerId,
+      configured,
+      missing: configured ? [] : ['GROQ_API_KEY'],
+    };
+  }
+
+  const missing = [
+    ...(environment.CLOUDFLARE_ACCOUNT_ID?.trim()
+      ? []
+      : ['CLOUDFLARE_ACCOUNT_ID']),
+    ...(environment.CLOUDFLARE_API_TOKEN?.trim()
+      ? []
+      : ['CLOUDFLARE_API_TOKEN']),
+  ];
+  return {
+    providerId,
+    configured: missing.length === 0,
+    missing,
+  };
+}
+
+export type ServerOptInState = 'disabled' | 'enabled' | 'invalid';
+
+export function getServerOptInState(
+  name: 'RAC_CONTEXTUAL_AI_ENABLED' | 'RAC_AI_LIVE_TEST_ENABLED',
+  environment: NodeJS.ProcessEnv = process.env,
+): ServerOptInState {
+  const value = environment[name]?.trim();
+  if (value === undefined || value === '' || value === 'false') {
+    return 'disabled';
+  }
+  return value === 'true' ? 'enabled' : 'invalid';
+}
+
 export const AI_APPLICATION_LIMITS = {
   maxConcurrentPerModel: 1,
   maxConcurrentPerProvider: 3,

@@ -89,6 +89,27 @@ Use two server-only clients:
   Read `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the backend
   environment.
 
+The analysis integration is disabled by default. Set
+`RAC_CONTEXTUAL_AI_ENABLED=true` in the backend environment only after separate
+approval; provider credentials alone do not enable execution. The tracked
+`backend/.env.example` contains blank credential placeholders, while the
+actual `backend/.env` remains local and ignored by Git.
+
+For local setup, copy `backend/.env.example` to `backend/.env` and add
+credentials only to that ignored backend-local file. Remove the local file or
+clear its credential assignments when no longer needed, and revoke credentials
+that may have been exposed. Do not send credentials in chat, add them to
+frontend variables, or commit them. `GET /api/ai/readiness` reports only
+credential presence, static model eligibility, server opt-in state, and that
+provider connectivity was not checked; it does not contact a provider.
+
+`RAC_AI_LIVE_TEST_ENABLED` is a separate default-off server setting. The
+readiness route only reports its state; no live-test endpoint is available in
+this phase. Enabling this setting alone cannot start a request. Future live
+verification must have its own implementation, exact model allow-list,
+request-count cap, cancellation/timeout, and confirmed free-account safety
+gate.
+
 Never return credentials in API responses, logs, health details, request
 records, or fixing prompts. Provider clients must not fall through to another
 provider or model. Missing credentials or unknown plan eligibility disables
@@ -359,17 +380,20 @@ deciding whether to schedule another.
 ### Prompt 10 scheduler implementation status
 
 `backend/src/ai/scheduler.ts` implements the bounded orchestration contract,
-but is not connected to an API route or the IBM assessment flow. It requires a
-prebuilt request, a positive token estimate, and a model-specific ledger job;
-it requires exactly one rule per job and derives `requestPayloadHash` from the
-canonical request messages, model, output cap, and response format/schema. It
-rejects requests that exceed the verified context/input or application output
-cap before creating a job. The default limits are six total requests,
-three per provider, and one per model, with round-robin batch dispatch, a
-300-job queue cap, a 120-second request-timeout ceiling, and two total
-attempts. A runnable job from another batch gets dispatch priority before the
-scheduler returns to a batch with queued work. `Retry-After` is honored as
-supplied; exponential backoff is bounded when the provider gives no delay.
+but `backend/src/services/contextualAssessmentScheduler.ts` now connects it
+to `POST /api/analyze` after IBM completes. Execution is disabled unless the
+server environment explicitly sets `RAC_CONTEXTUAL_AI_ENABLED=true`. Jobs use
+the bounded adapted target/evidence context, stable content hashes, and the
+existing persistent ledger. The scheduler requires exactly one rule per job
+and derives `requestPayloadHash` from canonical request messages, model,
+output cap, and response format/schema. It rejects requests that exceed the
+verified context/input or application output cap before creating a job. The
+default limits are six total requests, three per provider, and one per model,
+with round-robin batch dispatch, a 300-job queue cap, a 120-second
+request-timeout ceiling, and two total attempts. A runnable job from another
+batch gets dispatch priority before the scheduler returns to a batch with
+queued work. `Retry-After` is honored as supplied; exponential backoff is
+bounded when the provider gives no delay.
 
 The scheduler reserves model-specific RPM/RPD/TPM/TPD limits before
 dispatch. Its reservations share a per-ledger scheduler coordinator, seed from
@@ -571,3 +595,9 @@ the separate JSON usage ledger. Prompt 10 adds a scheduler module and mocked
 tests, without wiring it into the assessment/API path. Provider eligibility and
 runtime verification remain incomplete. No provider API call, live connection
 check, or inference was performed.
+
+Prompt 12 adds bounded report aggregation, model/job outcome reporting, and a
+read-only consolidated fixing prompt in the API and frontend. It consumes only
+validated job outcomes, preserves IBM output separately, and currently reports
+the blocked model catalog without dispatching the scheduler. Provider eligibility
+and runtime verification remain incomplete; no live provider call was made.

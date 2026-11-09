@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto'
 import * as aChecker from 'accessibility-checker'
 import type { AnalyzeIssue, AnalyzeResponse } from '../types/checker.js'
 import type { ContextAdapterResult } from '../types/contextV2.js'
+import { MODEL_CANDIDATES } from '../ai/config.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
 import { extractHtmlContextResultV2 } from './contextExtractionV2.js'
 import { assessAdaptedContext } from './contextualAssessment.js'
+import {
+  closeContextualAssessmentScheduler,
+  runContextualAssessmentJobs,
+} from './contextualAssessmentScheduler.js'
+import { aggregateAdvisoryReport } from './reportAggregation.js'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -196,8 +202,34 @@ export function analyzeHtml(
       findingCount: report.results.length,
     })
 
+    const issues = report.results
+      .filter((issue) => issue.value[1] !== 'PASS')
+      .map(normalizeIssue)
+    let aiOutcomes: Parameters<typeof aggregateAdvisoryReport>[1] = []
+    let aiSchedulerFailed = false
+    try {
+      const execution = await runContextualAssessmentJobs(
+        contextAdapter,
+        html,
+        filename,
+      )
+      aiOutcomes = execution.outcomes
+    } catch {
+      aiSchedulerFailed = true
+      console.error(
+        'Contextual AI scheduling failed; IBM accessibility results are unaffected.',
+      )
+    }
     const contextualAssessments =
       await getContextualAssessments(contextAdapter)
+    const advisoryReport = aggregateAdvisoryReport(
+      Object.values(MODEL_CANDIDATES),
+      aiOutcomes,
+      issues,
+    )
+    if (aiSchedulerFailed) {
+      advisoryReport.status = 'failed'
+    }
     const totalElapsedMilliseconds = Math.round(
       performance.now() - analysisStartedAt,
     )
@@ -206,6 +238,9 @@ export function analyzeHtml(
       totalElapsedMilliseconds,
       contextualStatus: contextualAssessments.inferenceStatus,
       contextualAssessmentCount: contextualAssessments.assessments.length,
+      advisoryModelCount: advisoryReport.models.length,
+      advisoryFindingCount: advisoryReport.findings.length,
+      aiSchedulerFailed,
     })
 
     return {
@@ -224,10 +259,9 @@ export function analyzeHtml(
         potentialRecommendations,
         manual,
       },
-      issues: report.results
-        .filter((issue) => issue.value[1] !== 'PASS')
-        .map(normalizeIssue),
+      issues,
       contextualAssessments,
+      advisoryReport,
     }
   })
 }
@@ -235,6 +269,7 @@ export function analyzeHtml(
 export function closeChecker(): Promise<void> {
   if (!closePromise) {
     closePromise = scanQueue.then(async () => {
+      closeContextualAssessmentScheduler()
       await aChecker.close()
     })
     scanQueue = closePromise.then(

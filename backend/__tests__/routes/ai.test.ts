@@ -64,6 +64,47 @@ describe('AI status routes during provider migration', () => {
     }
   });
 
+  it('reports only credential presence and does not probe providers', async () => {
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-secret-placeholder');
+    vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'test-account-id');
+    vi.stubEnv('CLOUDFLARE_API_TOKEN', 'test-cloudflare-secret-placeholder');
+    vi.stubEnv('RAC_CONTEXTUAL_AI_ENABLED', '');
+    vi.stubEnv('RAC_AI_LIVE_TEST_ENABLED', '');
+
+    try {
+      const response = await fetch(`${baseUrl}/api/ai/readiness`);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).not.toContain('test-groq-secret-placeholder');
+      expect(body).not.toContain('test-cloudflare-secret-placeholder');
+      expect(body).not.toContain('test-account-id');
+      expect(JSON.parse(body)).toMatchObject({
+        providers: [
+          { providerId: 'groq', configured: true, missing: [] },
+          {
+            providerId: 'cloudflare-workers-ai',
+            configured: true,
+            missing: [],
+          },
+        ],
+        contextualAiOptIn: 'disabled',
+        liveTestOptIn: 'disabled',
+        liveTestAvailable: false,
+        providerConnectivityChecked: false,
+      });
+      expect(JSON.parse(body).models).toHaveLength(6);
+      expect(
+        JSON.parse(body).models.every(
+          (model: { eligibility: string; operatorEnabled: boolean }) =>
+            model.eligibility === 'blocked_unverified' &&
+            !model.operatorEnabled,
+        ),
+      ).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('keeps historical usage readable without claiming an active provider', async () => {
     const response = await fetch(`${baseUrl}/api/ai/usage`);
     expect(response.status).toBe(200);

@@ -117,6 +117,11 @@ describe('IBM analysis when contextual assessment fails', () => {
         assessments: [],
         errorCode: 'contextual-assessment-failed',
       });
+      expect(response.advisoryReport).toMatchObject({
+        status: 'not_run',
+        findings: [],
+        fixingPrompt: null,
+      });
       expect(logError).toHaveBeenCalledWith(
         'Contextual assessment failed; IBM accessibility results are unaffected.',
       );

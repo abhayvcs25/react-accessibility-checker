@@ -17,40 +17,120 @@ type AnalyzeIssue = {
   help?: string
 }
 
-type ContextualAssessment = {
-  ruleId: string
-  targetId: string
-  assessment:
-    | 'potential_issue'
-    | 'no_issue_detected'
-    | 'insufficient_context'
-    | 'not_assessed'
-  evidence: {
-    record: { recordType: 'target' | 'evidence'; id: string }
-    text?: string
-  }[]
-  explanation: string
-  confidence: number | null
-  uncertainty: string[]
-  source: 'evidence_gate'
+type AdvisoryModelReport = {
+  providerId: string
+  modelId: string
+  eligibility: string
+  status:
+    | 'blocked'
+    | 'not_run'
+    | 'queued'
+    | 'in_progress'
+    | 'completed'
+    | 'partial'
+    | 'failed'
+    | 'quota_limited'
+  reason?: string
+  jobCount: number
+  validatedCount: number
+  invalidCount: number
+  notValidatedCount: number
+  failedCount: number
+  quotaLimited: boolean
 }
 
-type ContextualAssessmentReport = {
+type AdvisoryAssessment = {
+  jobId: string
+  providerId: string
   modelId: string
-  modelRevision: string
-  inferenceStatus:
-    | 'not_invoked_insufficient_context'
-    | 'not_invoked_disabled'
-    | 'not_invoked_no_targets'
-    | 'unavailable'
-    | 'failed'
-    | 'timed_out'
-    | 'busy'
-    | 'completed'
-    | 'completed_with_limit'
-  modelLoaded: boolean
-  assessments: ContextualAssessment[]
-  errorCode?: string
+  targetId: string
+  componentRef: string
+  domPath?: string
+  ruleId: string
+  status: 'potential_issue' | 'no_issue_detected' | 'insufficient_context'
+  explanation: string
+  evidence: { id: string; text?: string }[]
+  omittedEvidenceCount: number
+  confidence?: number
+}
+
+type AdvisoryEquivalentFinding = {
+  status: AdvisoryAssessment['status']
+  evidenceRefIds: string[]
+  omittedEvidenceCount: number
+  modelCount: number
+  jobIds: string[]
+}
+
+type AdvisoryFindingGroup = {
+  targetId: string
+  componentRef: string
+  domPath?: string
+  ruleId: string
+  agreement:
+    | 'unanimous_issue'
+    | 'unanimous_no_issue'
+    | 'insufficient_context'
+    | 'disagreement'
+  issueCount: number
+  validatedCount: number
+  assessments: AdvisoryAssessment[]
+  equivalentFindings: AdvisoryEquivalentFinding[]
+  relatedIbmIssueIds: string[]
+  omittedIbmIssueCount: number
+}
+
+type AdvisoryJobReport = {
+  jobId: string
+  providerId: string
+  modelId: string
+  targetId: string
+  componentRef: string
+  ruleId: string
+  status:
+    | 'queued'
+    | 'in_progress'
+    | 'succeeded'
+    | 'invalid_response'
+    | 'retryable_failed'
+    | 'permanent_failed'
+    | 'blocked'
+    | 'unknown_outcome'
+  validationStatus: 'valid' | 'invalid' | 'not_run'
+  errorClass: string | null
+  providerRequestId: string | null
+  inputTokens: number | null
+  outputTokens: number | null
+  tokenUsageSource: 'provider' | 'estimated' | 'unknown'
+}
+
+type AdvisoryReport = {
+  status: 'not_run' | 'queued' | 'in_progress' | 'completed' | 'partial' | 'failed'
+  models: AdvisoryModelReport[]
+  jobs: AdvisoryJobReport[]
+  assessmentGroups: AdvisoryFindingGroup[]
+  findings: AdvisoryFindingGroup[]
+  fixingPrompt: string | null
+  omittedJobCount: number
+  omittedPromptFindingCount: number
+}
+
+function getEquivalentModelNames(
+  finding: AdvisoryFindingGroup,
+  equivalent: AdvisoryEquivalentFinding,
+): string[] {
+  return Array.from(
+    new Set(
+      equivalent.jobIds.flatMap((jobId) => {
+        const assessment = finding.assessments.find(
+          (item) => item.jobId === jobId,
+        )
+        return assessment
+          ? [`${assessment.providerId}/${assessment.modelId}`]
+          : []
+      }),
+    ),
+  )
 }
 
 type AnalyzeSummary = {
@@ -67,7 +147,7 @@ type AnalyzeResponse = {
   analyzedAt: string
   summary: AnalyzeSummary
   issues: AnalyzeIssue[]
-  contextualAssessments: ContextualAssessmentReport
+  advisoryReport: AdvisoryReport
 }
 
 type SelectionState =
@@ -103,58 +183,152 @@ function isAnalyzeIssue(value: unknown): value is AnalyzeIssue {
   )
 }
 
-function isContextualAssessment(value: unknown): value is ContextualAssessment {
+function isAdvisoryAssessment(value: unknown): value is AdvisoryAssessment {
   return (
     isRecord(value) &&
-    typeof value.ruleId === 'string' &&
+    typeof value.jobId === 'string' &&
+    typeof value.providerId === 'string' &&
+    typeof value.modelId === 'string' &&
     typeof value.targetId === 'string' &&
+    typeof value.componentRef === 'string' &&
+    (value.domPath === undefined || typeof value.domPath === 'string') &&
+    typeof value.ruleId === 'string' &&
     [
       'potential_issue',
       'no_issue_detected',
       'insufficient_context',
-      'not_assessed',
-    ].includes(String(value.assessment)) &&
+    ].includes(String(value.status)) &&
     Array.isArray(value.evidence) &&
     value.evidence.every(
       (item) =>
         isRecord(item) &&
-        isRecord(item.record) &&
-        ['target', 'evidence'].includes(String(item.record.recordType)) &&
-        typeof item.record.id === 'string' &&
+        typeof item.id === 'string' &&
         (item.text === undefined || typeof item.text === 'string'),
     ) &&
     typeof value.explanation === 'string' &&
-    (value.confidence === null ||
+    typeof value.omittedEvidenceCount === 'number' &&
+    (value.confidence === undefined ||
       (typeof value.confidence === 'number' &&
-        Number.isFinite(value.confidence))) &&
-    Array.isArray(value.uncertainty) &&
-    value.uncertainty.every((item) => typeof item === 'string') &&
-    value.source === 'evidence_gate'
+        Number.isFinite(value.confidence)))
   )
 }
 
-function isContextualAssessmentReport(
+function isAdvisoryModelReport(
   value: unknown,
-): value is ContextualAssessmentReport {
+): value is AdvisoryModelReport {
   return (
     isRecord(value) &&
+    typeof value.providerId === 'string' &&
     typeof value.modelId === 'string' &&
-    typeof value.modelRevision === 'string' &&
+    typeof value.eligibility === 'string' &&
     [
-      'not_invoked_insufficient_context',
-      'not_invoked_disabled',
-      'not_invoked_no_targets',
-      'unavailable',
-      'failed',
-      'timed_out',
-      'busy',
+      'blocked',
+      'not_run',
+      'queued',
+      'in_progress',
       'completed',
-      'completed_with_limit',
-    ].includes(String(value.inferenceStatus)) &&
-    typeof value.modelLoaded === 'boolean' &&
+      'partial',
+      'failed',
+      'quota_limited',
+    ].includes(String(value.status)) &&
+    (value.reason === undefined || typeof value.reason === 'string') &&
+    ['jobCount', 'validatedCount', 'invalidCount', 'notValidatedCount', 'failedCount']
+      .every((key) => typeof value[key] === 'number' && Number.isFinite(value[key])) &&
+    typeof value.quotaLimited === 'boolean'
+  )
+}
+
+function isAdvisoryFindingGroup(value: unknown): value is AdvisoryFindingGroup {
+  return (
+    isRecord(value) &&
+    typeof value.targetId === 'string' &&
+    typeof value.componentRef === 'string' &&
+    (value.domPath === undefined || typeof value.domPath === 'string') &&
+    typeof value.ruleId === 'string' &&
+    [
+      'unanimous_issue',
+      'unanimous_no_issue',
+      'insufficient_context',
+      'disagreement',
+    ].includes(String(value.agreement)) &&
+    typeof value.issueCount === 'number' &&
+    typeof value.validatedCount === 'number' &&
     Array.isArray(value.assessments) &&
-    value.assessments.every(isContextualAssessment) &&
-    (value.errorCode === undefined || typeof value.errorCode === 'string')
+    value.assessments.every(isAdvisoryAssessment) &&
+    Array.isArray(value.equivalentFindings) &&
+    value.equivalentFindings.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.status === 'string' &&
+        Array.isArray(item.evidenceRefIds) &&
+        item.evidenceRefIds.every((reference) => typeof reference === 'string') &&
+        typeof item.omittedEvidenceCount === 'number' &&
+        typeof item.modelCount === 'number' &&
+        Array.isArray(item.jobIds) &&
+        item.jobIds.every((jobId) => typeof jobId === 'string'),
+    ) &&
+    Array.isArray(value.relatedIbmIssueIds) &&
+    value.relatedIbmIssueIds.every((item) => typeof item === 'string') &&
+    typeof value.omittedIbmIssueCount === 'number'
+  )
+}
+
+function isAdvisoryJobReport(value: unknown): value is AdvisoryJobReport {
+  return (
+    isRecord(value) &&
+    [
+      'jobId',
+      'providerId',
+      'modelId',
+      'targetId',
+      'componentRef',
+      'ruleId',
+    ].every((key) => typeof value[key] === 'string') &&
+    [
+      'queued',
+      'in_progress',
+      'succeeded',
+      'invalid_response',
+      'retryable_failed',
+      'permanent_failed',
+      'blocked',
+      'unknown_outcome',
+    ].includes(String(value.status)) &&
+    ['valid', 'invalid', 'not_run'].includes(String(value.validationStatus)) &&
+    (value.errorClass === null || typeof value.errorClass === 'string') &&
+    (value.providerRequestId === null ||
+      typeof value.providerRequestId === 'string') &&
+    (value.inputTokens === null || typeof value.inputTokens === 'number') &&
+    (value.outputTokens === null || typeof value.outputTokens === 'number') &&
+    ['provider', 'estimated', 'unknown'].includes(
+      String(value.tokenUsageSource),
+    )
+  )
+}
+
+function isAdvisoryReport(value: unknown): value is AdvisoryReport {
+  return (
+    isRecord(value) &&
+    ['not_run', 'queued', 'in_progress', 'completed', 'partial', 'failed'].includes(
+      String(value.status),
+    ) &&
+    Array.isArray(value.models) &&
+    value.models.every(isAdvisoryModelReport) &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isAdvisoryJobReport) &&
+    Array.isArray(value.assessmentGroups) &&
+    value.assessmentGroups.every(isAdvisoryFindingGroup) &&
+    Array.isArray(value.findings) &&
+    value.findings.every(isAdvisoryFindingGroup) &&
+    (value.fixingPrompt === null ||
+      (typeof value.fixingPrompt === 'string' &&
+        value.fixingPrompt.length <= 16_000)) &&
+    typeof value.omittedJobCount === 'number' &&
+    Number.isSafeInteger(value.omittedJobCount) &&
+    value.omittedJobCount >= 0 &&
+    typeof value.omittedPromptFindingCount === 'number' &&
+    Number.isSafeInteger(value.omittedPromptFindingCount) &&
+    value.omittedPromptFindingCount >= 0
   )
 }
 
@@ -184,58 +358,37 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     ) &&
     Array.isArray(value.issues) &&
     value.issues.every(isAnalyzeIssue) &&
-    isContextualAssessmentReport(value.contextualAssessments)
+    isAdvisoryReport(value.advisoryReport)
   )
 }
 
-function getAssessmentLabel(assessment: ContextualAssessment['assessment']) {
-  switch (assessment) {
-    case 'potential_issue':
-      return 'Potential issue'
-    case 'no_issue_detected':
-      return 'No issue detected'
-    case 'insufficient_context':
-      return 'Insufficient context'
-    case 'not_assessed':
-      return 'Not assessed'
+function getEmptyAssessmentMessage(report: AdvisoryReport): string {
+  if (report.status === 'not_run') {
+    return getAdvisoryStatusMessage(report)
   }
+  if (report.status === 'failed') {
+    return 'No validated assessments are available. Failed, blocked, and invalid jobs are not shown as findings; inspect the per-model and per-job outcomes.'
+  }
+  if (report.status === 'queued' || report.status === 'in_progress') {
+    return 'No validated assessment groups are available yet. Queued or running jobs are not treated as findings.'
+  }
+  if (report.status === 'partial') {
+    return 'No validated assessment groups are available. Some jobs may have failed or remained incomplete; those outcomes are not treated as negative results.'
+  }
+  return 'No validated assessment groups were returned.'
 }
 
-function getAssessmentSourceLabel(assessment: ContextualAssessment): string {
-  if (
-    assessment.assessment === 'not_assessed' &&
-    assessment.uncertainty.includes('provider-migration-pending')
-  ) {
-    return 'Provider migration pending'
+function getEmptyPromptMessage(report: AdvisoryReport): string {
+  if (report.findings.length === 0 && report.assessmentGroups.length > 0) {
+    return 'No prompt was generated because validated assessments did not identify a potential issue. “No issue detected” and “insufficient context” results are not turned into fixes.'
   }
-  return assessment.assessment === 'not_assessed'
-    ? 'Not assessed'
-    : 'Evidence gate'
-}
-
-function getInferenceStatusMessage(
-  report: ContextualAssessmentReport,
-): string {
-  switch (report.inferenceStatus) {
-    case 'not_invoked_insufficient_context':
-      return 'The model was not invoked because the captured static context does not include required evidence.'
-    case 'not_invoked_no_targets':
-      return 'No targets matched the current contextual-assessment pilot checks.'
-    case 'not_invoked_disabled':
-      return 'Contextual AI provider migration is pending; no model requests are sent. IBM findings remain unaffected.'
-    case 'unavailable':
-      return 'Contextual assessment is unavailable. IBM findings remain unaffected.'
-    case 'failed':
-      return 'Contextual inference failed. IBM findings remain unaffected.'
-    case 'timed_out':
-      return `${report.modelId} exceeded its response budget. IBM findings are returned; the target was not assessed.`
-    case 'busy':
-      return 'A previous model inference is still running. IBM findings are returned without waiting for another inference.'
-    case 'completed':
-      return `${report.modelId} returned advisory authored-name feedback. This is not a WCAG or IBM finding.`
-    case 'completed_with_limit':
-      return `${report.modelId} reported a provider quota or rate limit. Remaining eligible targets were not assessed.`
+  if (report.status === 'failed') {
+    return 'No prompt was generated because there are no validated actionable results. Failed, blocked, and invalid assessments are never used as fixing instructions.'
   }
+  if (report.status === 'queued' || report.status === 'in_progress') {
+    return 'No prompt is available yet. A prompt is generated only from validated actionable results.'
+  }
+  return 'No prompt was generated because there are no validated actionable advisory findings.'
 }
 
 function getIssueCategory(level: string): string {
@@ -252,6 +405,50 @@ function getIssueCategory(level: string): string {
       return 'Manual review'
     default:
       return level || 'Finding'
+  }
+}
+
+function formatStatus(status: string): string {
+  switch (status) {
+    case 'unanimous_issue':
+      return 'All validated assessments flagged an issue'
+    case 'unanimous_no_issue':
+      return 'All validated assessments found no issue'
+    case 'insufficient_context':
+      return 'Insufficient context (abstention)'
+    case 'potential_issue':
+      return 'Potential issue'
+    case 'no_issue_detected':
+      return 'No issue detected'
+    default:
+      return status.replaceAll('_', ' ')
+  }
+}
+
+function getAdvisoryStatusMessage(report: AdvisoryReport): string {
+  const validatedCount = report.models.reduce(
+    (total, model) => total + model.validatedCount,
+    0,
+  )
+  const allModelsBlocked =
+    report.models.length > 0 &&
+    report.models.every((model) => model.status === 'blocked')
+
+  switch (report.status) {
+    case 'not_run':
+      return allModelsBlocked
+        ? 'No model assessments ran because every configured model is blocked. Review each eligibility reason below.'
+        : 'No model assessment jobs have run. Review the model states below; no result is a negative assessment.'
+    case 'queued':
+      return 'Assessment jobs are queued and have not produced validated results yet.'
+    case 'in_progress':
+      return 'Assessment jobs are still in progress. Only validated results are included below.'
+    case 'completed':
+      return 'All reported jobs completed with validated results. This advisory output is not an IBM finding or a conformance determination.'
+    case 'partial':
+      return `${validatedCount} assessment(s) were validated; other work was blocked, invalid, failed, or not completed. Missing results are not negative assessments.`
+    case 'failed':
+      return 'No validated assessment results are available. Review model and job states below for blocked, invalid, or failed work.'
   }
 }
 
@@ -299,9 +496,14 @@ function App() {
   const [selection, setSelection] = useState<SelectionState>(EMPTY_STATE)
   const [report, setReport] = useState<AnalyzeResponse | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisCancelled, setAnalysisCancelled] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [copyPromptFeedback, setCopyPromptFeedback] = useState<string | null>(
+    null,
+  )
   const readId = useRef(0)
   const analysisInFlight = useRef(false)
+  const analysisController = useRef<AbortController | null>(null)
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
@@ -311,9 +513,12 @@ function App() {
       return
     }
 
+    analysisController.current?.abort()
     const currentReadId = ++readId.current
     setReport(null)
+    setAnalysisCancelled(false)
     setAnalysisError(null)
+    setCopyPromptFeedback(null)
 
     if (!isHtmlFile(file)) {
       setSelection({
@@ -355,10 +560,13 @@ function App() {
   }
 
   function clearSelection() {
+    analysisController.current?.abort()
     readId.current += 1
     setSelection(EMPTY_STATE)
     setReport(null)
+    setAnalysisCancelled(false)
     setAnalysisError(null)
+    setCopyPromptFeedback(null)
   }
 
   async function handleAnalyze() {
@@ -367,10 +575,14 @@ function App() {
     }
 
     const currentReadId = readId.current
+    const controller = new AbortController()
+    analysisController.current = controller
     analysisInFlight.current = true
     setIsAnalyzing(true)
+    setAnalysisCancelled(false)
     setAnalysisError(null)
     setReport(null)
+    setCopyPromptFeedback(null)
 
     try {
       const response = await fetch('http://localhost:3001/api/analyze', {
@@ -380,6 +592,7 @@ function App() {
           html: selection.content,
           filename: selection.info.name,
         }),
+        signal: controller.signal,
       })
 
       let payload: unknown
@@ -411,14 +624,41 @@ function App() {
 
       setReport(payload)
     } catch {
-      if (currentReadId === readId.current) {
+      if (controller.signal.aborted) {
+        if (currentReadId === readId.current) {
+          setAnalysisCancelled(true)
+        }
+      } else if (currentReadId === readId.current) {
         setAnalysisError(
           'Could not reach the analysis backend at localhost:3001. Make sure it is running, then try again.',
         )
       }
     } finally {
+      if (analysisController.current === controller) {
+        analysisController.current = null
+      }
       analysisInFlight.current = false
       setIsAnalyzing(false)
+    }
+  }
+
+  function handleCancelAnalysis() {
+    analysisController.current?.abort()
+  }
+
+  async function handleCopyFixingPrompt() {
+    const prompt = report?.advisoryReport.fixingPrompt
+    if (!prompt) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(prompt)
+      setCopyPromptFeedback('Fixing prompt copied.')
+    } catch {
+      setCopyPromptFeedback(
+        'Could not copy the fixing prompt. Select and copy the prompt text manually.',
+      )
     }
   }
 
@@ -427,7 +667,9 @@ function App() {
       ? `Reading ${selection.name} locally.`
       : selection.status === 'selected'
         ? isAnalyzing
-          ? 'An accessibility analysis request is in progress.'
+          ? analysisCancelled
+            ? 'Stopped waiting for the analysis response. Server processing may continue.'
+            : 'An accessibility analysis request is in progress.'
           : report
             ? `Analysis complete for ${report.filename}. ${report.summary.total} findings reported.`
             : `${selection.info.name} is ready for analysis.`
@@ -567,16 +809,30 @@ function App() {
               contents to the local backend and run the accessibility check.
             </p>
             <div className="analysis-actions">
-              <button
-                className="button button-primary"
-                type="button"
-                onClick={handleAnalyze}
-                disabled={isAnalyzing}
-                aria-busy={isAnalyzing}
-              >
-                {isAnalyzing ? 'Analyzing…' : 'Analyze HTML'}
-              </button>
+              {isAnalyzing ? (
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={handleCancelAnalysis}
+                >
+                  Stop waiting
+                </button>
+              ) : (
+                <button
+                  className="button button-primary"
+                  type="button"
+                  onClick={handleAnalyze}
+                >
+                  Analyze HTML
+                </button>
+              )}
             </div>
+            {isAnalyzing && (
+              <p className="analysis-note">
+                Stopping closes the browser request; the backend may continue
+                processing.
+              </p>
+            )}
           </section>
         )}
 
@@ -590,7 +846,17 @@ function App() {
         {isAnalyzing && (
           <p className="loading-message" role="status" aria-live="polite">
             <span className="loading-indicator" aria-hidden="true" />
-            Analyzing HTML with the accessibility checker…
+            {analysisCancelled
+              ? 'Stopped waiting in this browser. The server may continue processing; no report will be shown for this request.'
+              : 'Analyzing HTML with the accessibility checker…'}
+          </p>
+        )}
+
+        {analysisCancelled && !isAnalyzing && (
+          <p className="empty-findings" role="status">
+            The browser stopped waiting for the analysis response. The backend
+            may have continued processing this request. No result was received;
+            analyze again when ready.
           </p>
         )}
 
@@ -619,6 +885,7 @@ function App() {
               </p>
             </div>
 
+            <h3 className="results-section-title">IBM Equal Access summary</h3>
             <dl className="summary-grid">
               {SUMMARY_ITEMS.map(({ key, label }) => (
                 <div className="summary-item" key={key}>
@@ -629,7 +896,7 @@ function App() {
             </dl>
 
             <div className="findings-heading">
-              <h3>Findings</h3>
+              <h3>IBM Equal Access findings</h3>
               <span>{report.issues.length}</span>
             </div>
             {report.issues.length === 0 ? (
@@ -640,13 +907,15 @@ function App() {
                   const helpUrl = issue.help
                     ? getSafeHelpUrl(issue.help)
                     : null
+                  const ibmIssueId = `IBM-${String(index + 1).padStart(2, '0')}`
 
                   return (
                     <li
                       className="finding-item"
-                      key={`${issue.ruleId}-${issue.path}-${index}`}
+                      key={ibmIssueId}
                     >
                       <div className="finding-topline">
+                        <code className="ibm-issue-id">{ibmIssueId}</code>
                         <span
                           className="finding-category"
                           data-level={issue.level.toLowerCase()}
@@ -692,98 +961,257 @@ function App() {
               </ol>
             )}
 
-            <section
-              className="contextual-report"
-              aria-labelledby="contextual-report-title"
-            >
+            <section className="advisory-report" aria-labelledby="advisory-report-title">
               <div className="findings-heading">
-                <h3 id="contextual-report-title">
-                  Contextual pilot assessments
+                <h3 id="advisory-report-title">
+                  Separate AI assessments and findings
                 </h3>
-                <span>{report.contextualAssessments.assessments.length}</span>
+                <span
+                  aria-label={`${report.advisoryReport.assessmentGroups.length} validated assessment groups`}
+                >
+                  {report.advisoryReport.assessmentGroups.length}
+                </span>
               </div>
-              <p className="contextual-report-note">
-                Advisory contextual output is separate from IBM findings and
-                summary counts. Inference produced results:{' '}
-                {report.contextualAssessments.modelLoaded ? 'yes' : 'no'}
+              <p className="advisory-report-note" role="status">
+                {getAdvisoryStatusMessage(report.advisoryReport)} Advisory
+                assessments never change IBM findings or counts and do not
+                establish WCAG conformance.
               </p>
-              <p className="contextual-status" role="status">
-                {getInferenceStatusMessage(report.contextualAssessments)}
+              <p className="advisory-count-note">
+                {report.advisoryReport.assessmentGroups.length} validated
+                assessment group(s);{' '}
+                {report.advisoryReport.findings.length} group(s) include at
+                least one potential issue.
               </p>
-              {report.contextualAssessments.errorCode && (
-                <p className="contextual-error-code">
-                  Status code: {report.contextualAssessments.errorCode}
-                </p>
-              )}
-              {report.contextualAssessments.assessments.length > 0 && (
-                <ol className="contextual-assessment-list">
-                  {report.contextualAssessments.assessments.map(
-                    (assessment, index) => (
-                      <li
-                        className="contextual-assessment-item"
-                        key={`${assessment.ruleId}-${assessment.targetId}-${index}`}
-                      >
-                        <div className="finding-topline">
-                          <span className="contextual-assessment-status">
-                            {getAssessmentLabel(assessment.assessment)}
-                          </span>
-                          <span className="contextual-assessment-source">
-                            {getAssessmentSourceLabel(assessment)}
-                          </span>
-                          <code className="finding-rule">
-                            {assessment.ruleId}
-                          </code>
-                        </div>
-                        <p className="finding-message">
-                          {assessment.explanation}
-                        </p>
-                        <dl className="finding-details">
-                          <div>
-                            <dt>Target</dt>
-                            <dd>
-                              <code>{assessment.targetId}</code>
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Supplied evidence</dt>
-                            <dd>
-                              {assessment.evidence.length === 0 ? (
-                                'No evidence records'
-                              ) : (
-                                <ul className="contextual-evidence-list">
-                                  {assessment.evidence.map((item) => (
-                                    <li
-                                      key={`${item.record.recordType}-${item.record.id}`}
-                                    >
-                                      <code>
-                                        {item.record.recordType}:
-                                        {item.record.id}
-                                      </code>
-                                      {item.text && <span> — {item.text}</span>}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </dd>
-                          </div>
-                          {assessment.uncertainty.length > 0 && (
-                            <div>
-                              <dt>Missing or uncertain prerequisites</dt>
-                              <dd>
-                                <ul className="contextual-evidence-list">
-                                  {assessment.uncertainty.map((item) => (
-                                    <li key={item}>{item}</li>
-                                  ))}
-                                </ul>
-                              </dd>
-                            </div>
-                          )}
-                        </dl>
+              <ul className="advisory-model-list">
+                {report.advisoryReport.models.map((model) => (
+                  <li
+                    className="advisory-model-item"
+                    key={`${model.providerId}-${model.modelId}`}
+                  >
+                    <div className="advisory-model-heading">
+                      <strong>{model.modelId}</strong>
+                      <span className="advisory-status">
+                        {formatStatus(model.status)}
+                      </span>
+                    </div>
+                    <p>
+                      Provider: {model.providerId}; eligibility:{' '}
+                      {formatStatus(model.eligibility)};{' '}
+                      {model.jobCount === 0
+                        ? 'no assessment jobs scheduled'
+                        : `validated ${model.validatedCount} of ${model.jobCount} jobs`}; invalid{' '}
+                      {model.invalidCount}; not validated{' '}
+                      {model.notValidatedCount}; failed {model.failedCount}
+                      {model.quotaLimited ? '; provider quota limited' : ''}.
+                    </p>
+                    {model.reason && <p>{model.reason}</p>}
+                  </li>
+                ))}
+              </ul>
+
+              {report.advisoryReport.jobs.length > 0 && (
+                <details className="advisory-job-details">
+                  <summary>
+                    Per-job outcomes ({report.advisoryReport.jobs.length})
+                  </summary>
+                  <ul className="advisory-job-list">
+                    {report.advisoryReport.jobs.map((job) => (
+                      <li key={job.jobId}>
+                        <code>
+                          {job.providerId}/{job.modelId}
+                        </code>{' '}
+                        — target <code>{job.targetId}</code>, rule{' '}
+                        <code>{job.ruleId}</code>: {formatStatus(job.status)};{' '}
+                        validation {formatStatus(job.validationStatus)}
+                        {job.errorClass ? `; ${job.errorClass}` : ''}
+                        {job.providerRequestId
+                          ? `; request ${job.providerRequestId}`
+                          : ''}
+                        {`; tokens in ${
+                          job.inputTokens ?? 'unknown'
+                        }, out ${
+                          job.outputTokens ?? 'unknown'
+                        } (${job.tokenUsageSource})`}
+                        .
                       </li>
-                    ),
+                    ))}
+                  </ul>
+                  {report.advisoryReport.omittedJobCount > 0 && (
+                    <p>
+                      {report.advisoryReport.omittedJobCount} additional jobs
+                      are omitted from this report.
+                    </p>
                   )}
+                </details>
+              )}
+
+              {report.advisoryReport.assessmentGroups.length === 0 ? (
+                <p className="empty-findings">
+                  {getEmptyAssessmentMessage(report.advisoryReport)}
+                </p>
+              ) : (
+                <ol className="advisory-finding-list">
+                  {report.advisoryReport.assessmentGroups.map((finding) => (
+                    <li
+                      className="advisory-finding-item"
+                      key={`${finding.targetId}-${finding.ruleId}`}
+                    >
+                      <div className="finding-topline">
+                        <span className="advisory-tag">
+                          {formatStatus(finding.agreement)}
+                        </span>
+                        <span className="advisory-tag advisory-tag-subtle">
+                          {finding.issueCount} of {finding.validatedCount}{' '}
+                          flagged an issue
+                        </span>
+                        <code className="finding-rule">{finding.ruleId}</code>
+                      </div>
+                      <dl className="finding-details">
+                        <div>
+                          <dt>Component</dt>
+                          <dd>
+                            <code>{finding.componentRef}</code> (target{' '}
+                            <code>{finding.targetId}</code>)
+                          </dd>
+                        </div>
+                        {finding.domPath && (
+                          <div>
+                            <dt>DOM path</dt>
+                            <dd>
+                              <code>{finding.domPath}</code>
+                            </dd>
+                          </div>
+                        )}
+                        {finding.relatedIbmIssueIds.length > 0 && (
+                          <div>
+                            <dt>Separate IBM references</dt>
+                            <dd>
+                              {finding.relatedIbmIssueIds.join(', ')}
+                              {finding.omittedIbmIssueCount > 0
+                                ? `, plus ${finding.omittedIbmIssueCount} omitted`
+                                : ''}
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                      <div className="advisory-equivalent-findings">
+                        <strong>
+                          Exact matching validated assessments (same status,
+                          explanation, and evidence references)
+                        </strong>
+                        <ul>
+                          {finding.equivalentFindings.map((equivalent) => (
+                            <li
+                              key={`${equivalent.status}-${equivalent.jobIds.join(',')}`}
+                            >
+                              {formatStatus(equivalent.status)} from{' '}
+                              {equivalent.modelCount} model(s)
+                              {': '}
+                              {getEquivalentModelNames(
+                                finding,
+                                equivalent,
+                              ).join(', ')}
+                              ; evidence refs:{' '}
+                              {equivalent.evidenceRefIds.length > 0
+                                ? equivalent.evidenceRefIds.join(', ')
+                                : 'none'}
+                              {equivalent.omittedEvidenceCount > 0
+                                ? `, plus ${equivalent.omittedEvidenceCount} omitted`
+                                : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <ul className="advisory-assessment-list">
+                        {finding.assessments.map((assessment) => (
+                          <li key={assessment.jobId}>
+                            <strong>
+                              {assessment.providerId}/{assessment.modelId}
+                            </strong>
+                            : {formatStatus(assessment.status)} —{' '}
+                            {assessment.explanation}
+                            <span className="advisory-assessment-location">
+                              {' '}
+                              Component <code>{assessment.componentRef}</code>
+                              {assessment.domPath
+                                ? `; DOM path ${assessment.domPath}`
+                                : ''}
+                              .
+                            </span>
+                            {assessment.confidence !== undefined && (
+                              <span>
+                                {' '}
+                                Model-reported confidence (uncalibrated):{' '}
+                                {assessment.confidence.toFixed(2)}.
+                              </span>
+                            )}
+                            {assessment.evidence.length > 0 && (
+                              <ul className="advisory-evidence-list">
+                                {assessment.evidence.map((evidence) => (
+                                  <li key={evidence.id}>
+                                    <code>{evidence.id}</code>
+                                    {evidence.text
+                                      ? ` — ${evidence.text}`
+                                      : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {assessment.omittedEvidenceCount > 0 && (
+                              <span>
+                                {' '}
+                                {assessment.omittedEvidenceCount} additional
+                                evidence references omitted.
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
                 </ol>
               )}
+
+              <section className="fixing-prompt" aria-labelledby="fixing-prompt-title">
+                <div className="fixing-prompt-heading">
+                  <h4 id="fixing-prompt-title">Consolidated fixing prompt</h4>
+                  {report.advisoryReport.fixingPrompt && (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={handleCopyFixingPrompt}
+                    >
+                      Copy prompt
+                    </button>
+                  )}
+                </div>
+                <p>
+                  This prompt is read-only here. Your external coding assistant
+                  decides whether to make edits; this application never changes
+                  project files.
+                </p>
+                {report.advisoryReport.fixingPrompt ? (
+                  <pre className="fixing-prompt-content">
+                    {report.advisoryReport.fixingPrompt}
+                  </pre>
+                ) : (
+                  <p className="empty-findings">
+                    {getEmptyPromptMessage(report.advisoryReport)}
+                  </p>
+                )}
+                {report.advisoryReport.omittedPromptFindingCount > 0 && (
+                  <p>
+                    {report.advisoryReport.omittedPromptFindingCount} additional
+                    findings are omitted from the bounded prompt.
+                  </p>
+                )}
+                {copyPromptFeedback && (
+                  <p className="copy-prompt-feedback" role="status">
+                    {copyPromptFeedback}
+                  </p>
+                )}
+              </section>
             </section>
           </section>
         )}
