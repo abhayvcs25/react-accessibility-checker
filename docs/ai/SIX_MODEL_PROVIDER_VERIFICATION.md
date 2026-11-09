@@ -160,11 +160,11 @@ assess legal compatibility.
   recorded as `zero_cost_eligible` for these three models, conditional on the
   reported Free account remaining unchanged and usage staying within the
   shared daily allocation.
-- **No runtime quota guard exists:** The provider's Free-plan rejection at the
-  limit is distinct from an application-level preflight/stop guard. No client
-  exists and no requests were sent. Any future client must treat exhaustion as
-  terminal for the remaining work and must not switch to a paid plan or billing
-  route.
+- **Quota handling:** The provider's Free-plan rejection at the limit is
+  distinct from an application-level preflight/ledger guard. A Cloudflare
+  adapter with mocked tests now maps error `3036` to terminal quota exhaustion
+  and stops on paid-plan-required error `5035`; no live requests were sent.
+  Application-level preflight and scheduler integration remain unimplemented.
 - **Rate limits — Published task-level limit:** Text generation has a default
   limit of 300 requests per minute, except models requiring Workers Paid.
   Cloudflare identifies those exceptions in its pricing documentation; the
@@ -195,6 +195,11 @@ assess legal compatibility.
 | GLM-4.7-Flash | `@cf/zai-org/glm-4.7-flash` | 131,072 | Unconfirmed | 4,096 (operator-reported documentation) | 2,048 | $0.0605 model page; $0.060 pricing table / $0.40 | 5,500 / 36,400 | Account-reported zero-cost eligible within shared Free allocation |
 | NVIDIA Nemotron 3 120B | `@cf/nvidia/nemotron-3-120b-a12b` | 256,000 | Unconfirmed | 16,384 (operator-reported documentation) | 2,048 | $0.50 / $1.50 | 45,455 / 136,364 | Account-reported zero-cost eligible within shared Free allocation |
 | Gemma 4 26B A4B | `@cf/google/gemma-4-26b-a4b-it` | 256,000 | Unconfirmed | 8,192 (operator-reported documentation) | 2,048 | $0.10 / $0.30 | 9,091 / 27,273 | Account-reported zero-cost eligible within shared Free allocation |
+
+Cloudflare currently lists Nemotron 3 120B for planned deprecation on
+2026-11-20. Its candidate ID is preserved, but use after that date requires
+renewed provider verification and operator approval; do not silently substitute
+another model.
 
 For each exact model schema, `max_tokens` and
 `max_completion_tokens` exist as nullable integer request parameters. This
@@ -238,6 +243,7 @@ The exact model pages document these additional capabilities:
 - [Pricing and free allocation](https://developers.cloudflare.com/workers-ai/platform/pricing/)
 - [Rate limits](https://developers.cloudflare.com/workers-ai/platform/limits/)
 - [Errors](https://developers.cloudflare.com/workers-ai/platform/errors/)
+- [Reject busy requests](https://developers.cloudflare.com/workers-ai/features/reject-if-busy/)
 - [Data usage](https://developers.cloudflare.com/workers-ai/platform/data-usage/)
 - [GLM synchronous output schema](https://developers.cloudflare.com/workers-ai/models/glm-4.7-flash/sync-output.json)
 - [Nemotron synchronous output schema](https://developers.cloudflare.com/workers-ai/models/nemotron-3-120b-a12b/sync-output.json)
@@ -249,16 +255,19 @@ The exact model pages document these additional capabilities:
 The Cloudflare JSON Mode page's current supported-model list does not include
 GLM-4.7-Flash, Nemotron 3 120B, or Gemma 4 26B A4B IT. Their request schemas
 accepting generic `response_format`/`json_schema` parameters do not establish
-support for those exact models. The operator proposes testing that support
-provisionally during implementation; no such tests or live requests have yet
-been performed.
+support for those exact models. A Cloudflare adapter now constructs the
+documented JSON Schema request for isolated mocked tests and rejects malformed
+or non-JSON responses; it is not connected to the assessment pipeline.
+Exact-model schema support, schema conformance, authentication, and usage
+remain untested at runtime. All Cloudflare models remain blocked.
 
 ## Integration decision
 
-1. **Provider client implementation can proceed behind the existing blocked
+1. **Cloudflare provider client implementation is complete behind the blocked
    eligibility gate.** Do not enable a candidate or send live requests until
-   the adapter is covered with local tests and the account owner authorizes
-   controlled runtime schema checks under the ₹0 account constraints.
+   the account owner authorizes controlled runtime schema checks under the ₹0
+   account constraints. The adapter has no assessment or quota-ledger
+   integration.
 2. **Groq account billing is reported zero-cost eligible.** The operator
    confirmed Free plan, Allowed Models, organization limits, no payment method,
    no purchased credits, and no auto-recharge. The models remain blocked pending

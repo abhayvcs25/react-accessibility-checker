@@ -153,6 +153,26 @@ describe('Groq provider adapter', () => {
     });
   });
 
+  it('does not expose an API key embedded in provider request IDs', async () => {
+    const fetcher = createFetch(
+      jsonResponse(
+        completion({ id: `chatcmpl-${apiKey}-123` }),
+        { headers: { 'x-request-id': `req-${apiKey}-456` } },
+      ),
+    );
+    const adapter = createGroqProviderAdapter({
+      fetcher,
+      environment: { GROQ_API_KEY: apiKey },
+    });
+
+    const result = await adapter.complete(
+      makeRequest('openai/gpt-oss-20b'),
+    );
+
+    expect(result.providerRequestId).toBeNull();
+    expect(JSON.stringify(result)).not.toContain(apiKey);
+  });
+
   it('does not make a request when credentials are missing', async () => {
     const fetcher = createFetch(jsonResponse(completion()));
     const adapter = createGroqProviderAdapter({

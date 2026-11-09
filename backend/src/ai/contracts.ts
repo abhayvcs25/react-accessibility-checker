@@ -70,6 +70,8 @@ export type ProviderErrorKind =
   | 'cancelled'
   | 'rate_limited'
   | 'quota_exhausted'
+  | 'billing_required'
+  | 'model_deprecated'
   | 'unavailable'
   | 'authentication'
   | 'invalid_request'

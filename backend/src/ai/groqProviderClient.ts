@@ -66,6 +66,16 @@ function safeProviderCode(value: unknown, secret: string): string | null {
     : null;
 }
 
+function safeProviderRequestId(value: unknown, secret: string): string | null {
+  return typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    !value.includes(secret) &&
+    /^[a-zA-Z0-9._:-]+$/.test(value)
+    ? value
+    : null;
+}
+
 function getProviderErrorDetails(value: unknown, secret: string): {
   providerCode: string | null;
 } {
@@ -144,6 +154,7 @@ function parseCompletionBody(
   value: unknown,
   modelId: EligibleModelId,
   responseRequestId: string | null,
+  apiKey: string,
 ): ProviderCompletion {
   if (
     !isRecord(value) ||
@@ -182,9 +193,7 @@ function parseCompletionBody(
 
   const finishReason = choice.finish_reason;
   const providerRequestId =
-    (typeof value.id === 'string' && value.id.length > 0
-      ? value.id
-      : null) ?? responseRequestId;
+    safeProviderRequestId(value.id, apiKey) ?? responseRequestId;
   const common = {
     providerId: 'groq' as const,
     modelId,
@@ -408,8 +417,14 @@ export function createGroqProviderAdapter(
         });
 
         const responseRequestId =
-          response.headers.get('x-request-id') ??
-          response.headers.get('request-id');
+          safeProviderRequestId(
+            response.headers.get('x-request-id'),
+            credentials.groqApiKey,
+          ) ??
+          safeProviderRequestId(
+            response.headers.get('request-id'),
+            credentials.groqApiKey,
+          );
         if (!response.ok) {
           let errorBody: unknown = null;
           try {
@@ -431,6 +446,7 @@ export function createGroqProviderAdapter(
           body,
           request.modelId,
           responseRequestId,
+          credentials.groqApiKey,
         );
       } catch (error) {
         if (error instanceof ProviderRequestError) {
