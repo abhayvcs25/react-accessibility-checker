@@ -10,14 +10,29 @@ export interface ProviderMessage {
   content: string;
 }
 
-export interface ProviderRequest {
+interface ProviderRequestBase {
   modelId: EligibleModelId;
   messages: readonly ProviderMessage[];
   maxOutputTokens: number;
   timeoutMs: number;
-  responseFormat: 'strict_json_schema' | 'json' | 'text';
   signal?: AbortSignal;
 }
+
+export type ProviderRequest = ProviderRequestBase &
+  (
+    | {
+        responseFormat: 'strict_json_schema';
+        responseSchema: {
+          name: string;
+          description?: string;
+          schema: Record<string, unknown>;
+        };
+      }
+    | {
+        responseFormat: 'json' | 'text';
+        responseSchema?: never;
+      }
+  );
 
 export interface ProviderTokenUsage {
   inputTokens: number | null;
@@ -52,6 +67,7 @@ export type ProviderCompletion =
 
 export type ProviderErrorKind =
   | 'timeout'
+  | 'cancelled'
   | 'rate_limited'
   | 'quota_exhausted'
   | 'unavailable'

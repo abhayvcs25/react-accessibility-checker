@@ -2,9 +2,10 @@
 
 The legacy Gemini/OpenRouter selected-model pipeline and local Qwen runtime
 have been retired. Shared Groq and Cloudflare Workers AI candidate metadata and
-provider-neutral contracts now exist, but no direct provider clients have been
-implemented. Contextual AI assessment remains disabled, and the backend makes
-no provider requests. IBM Equal Access analysis continues independently.
+provider-neutral contracts now exist. The isolated Groq adapter is implemented
+for GPT-OSS 120B and 20B, but is not wired into the assessment path. Contextual
+AI assessment remains disabled, and the backend makes no provider requests.
+IBM Equal Access analysis continues independently.
 
 No model is currently eligible for requests. All six candidates remain
 `blocked_unverified` and operator-disabled. The operator reports that Groq's
@@ -31,15 +32,18 @@ until tested with the accessibility result schema.
 Eligibility still fails closed unless a candidate is fully verified,
 explicitly zero-cost eligible, enabled by the operator, and has a positive
 output cap and its configured structured-output capability confirmed. No
-candidate has been marked fully verified, and no provider clients or runtime
-quota guards exist. The Cloudflare Free plan rejects operations beyond the
-daily allocation; any future client must stop on quota exhaustion and never
-switch to billable usage.
+candidate has been marked fully verified. No runtime quota guards exist. The
+Groq adapter is implemented for GPT-OSS 120B and 20B only, but has no
+assessment-pipeline integration and has not been runtime verified. The
+Cloudflare Free plan rejects operations beyond the daily allocation; its
+future client must stop on quota exhaustion and never switch to billable
+usage.
 
 Retired `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, and `RAC_AI_MODEL` settings are
-not used. Future backend-only credential names are `GROQ_API_KEY`,
+not used. Backend-only credential names are `GROQ_API_KEY`,
 `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN`; setting them does not
-enable any candidate. No credentials are needed or consumed in this phase.
+enable any candidate. The Groq adapter reads `GROQ_API_KEY` only when invoked.
+No credentials are needed or consumed in this phase.
 
 Exact model evidence and unknowns are listed in
 [provider verification](ai/SIX_MODEL_PROVIDER_VERIFICATION.md). The approved
