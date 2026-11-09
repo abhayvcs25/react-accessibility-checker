@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import {
@@ -9,9 +9,11 @@ import {
   type CandidateModelId,
 } from './config.js';
 
-const LEDGER_SCHEMA_VERSION = 1;
+const LEDGER_SCHEMA_VERSION = 2;
 const DEFAULT_RETENTION_DAYS = 7;
+const DEFAULT_ATTEMPT_LEASE_MS = 120_000;
 const MAX_NORMALIZED_RESULT_BYTES = 1_000_000;
+const SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS = new Set(['schema-v1']);
 
 const TERMINAL_STATUSES = [
   'succeeded',
@@ -49,6 +51,7 @@ export type JsonValue =
 export interface BatchLedgerOptions {
   filePath?: string;
   retentionDays?: number;
+  attemptLeaseMs?: number;
   environment?: NodeJS.ProcessEnv;
 }
 
@@ -302,6 +305,82 @@ function assertTokenCount(value: number | null | undefined, field: string): void
   }
 }
 
+function isProcessAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    if (isRecord(error) && error.code === 'ESRCH') {
+      return false;
+    }
+    return true;
+  }
+}
+
+function validateAssessmentResult(
+  value: unknown,
+  job: {
+    componentId: string;
+    providerId: string;
+    modelId: string;
+    schemaVersion: string;
+  },
+  ruleIds: ReadonlySet<string>,
+  evidenceRefIds: ReadonlySet<string>,
+): JsonValue {
+  if (!SUPPORTED_ASSESSMENT_SCHEMA_VERSIONS.has(job.schemaVersion)) {
+    throw new Error(
+      `Unsupported assessment result schema version: ${job.schemaVersion}.`,
+    );
+  }
+  if (!isRecord(value)) {
+    throw new TypeError('The assessment result must be an object.');
+  }
+  const allowedFields = new Set([
+    'targetId',
+    'ruleId',
+    'status',
+    'explanation',
+    'evidenceRefs',
+    'confidence',
+    'providerId',
+    'modelId',
+  ]);
+  if (Object.keys(value).some((key) => !allowedFields.has(key))) {
+    throw new TypeError('The assessment result contains unsupported fields.');
+  }
+  if (
+    value.targetId !== job.componentId ||
+    typeof value.ruleId !== 'string' ||
+    !ruleIds.has(value.ruleId) ||
+    typeof value.status !== 'string' ||
+    !['potential_issue', 'no_issue_detected', 'insufficient_context'].includes(
+      value.status,
+    ) ||
+    typeof value.explanation !== 'string' ||
+    value.explanation.trim().length === 0 ||
+    value.explanation.length > 2_000 ||
+    !Array.isArray(value.evidenceRefs) ||
+    value.evidenceRefs.some(
+      (reference) =>
+        typeof reference !== 'string' || !evidenceRefIds.has(reference),
+    ) ||
+    value.providerId !== job.providerId ||
+    value.modelId !== job.modelId ||
+    (value.confidence !== undefined &&
+      value.confidence !== null &&
+      (typeof value.confidence !== 'number' ||
+        !Number.isFinite(value.confidence) ||
+        value.confidence < 0 ||
+        value.confidence > 1))
+  ) {
+    throw new TypeError(
+      'The assessment result does not match the job schema, identity, or permitted evidence.',
+    );
+  }
+  return canonicalize(value);
+}
+
 export function deriveJobIdempotencyKey(
   input: CreateJobInput,
   snapshot: {
@@ -322,7 +401,9 @@ export function deriveJobIdempotencyKey(
       modelId: input.modelId,
       componentId: input.componentId,
       ruleIds,
+      evidenceRefIds: [...new Set(input.evidenceRefIds)].sort(),
       contextHash: input.contextHash,
+      requestPayloadHash: input.requestPayloadHash,
       promptVersion: input.promptVersion,
       schemaVersion: input.schemaVersion,
       modelConfigHash: input.modelConfigHash,
@@ -333,7 +414,11 @@ export function deriveJobIdempotencyKey(
 export class BatchLedger {
   readonly filePath: string;
   readonly retentionDays: number;
+  readonly attemptLeaseMs: number;
   private readonly database: DatabaseSync;
+  private readonly ownerInstanceId = randomUUID();
+  private readonly ownerProcessId = process.pid;
+  private readonly ownerHost = hostname();
   private closed = false;
 
   constructor(options: BatchLedgerOptions = {}) {
@@ -349,6 +434,14 @@ export class BatchLedger {
       environment.USAGE_LEDGER_RETENTION_DAYS,
       options.retentionDays,
     );
+    this.attemptLeaseMs = options.attemptLeaseMs ?? DEFAULT_ATTEMPT_LEASE_MS;
+    if (
+      !Number.isSafeInteger(this.attemptLeaseMs) ||
+      this.attemptLeaseMs < 1_000 ||
+      this.attemptLeaseMs > 24 * 60 * 60 * 1_000
+    ) {
+      throw new RangeError('attemptLeaseMs must be an integer from 1000 through 86400000.');
+    }
     mkdirSync(dirname(this.filePath), { recursive: true });
     const existingFile = existsSync(this.filePath);
     this.database = new DatabaseSync(this.filePath, {
@@ -391,6 +484,20 @@ export class BatchLedger {
       .get() as DatabaseRow;
     const version = toNumber(versionRow.user_version);
     if (version === LEDGER_SCHEMA_VERSION) {
+      return;
+    }
+    if (version === 1) {
+      this.transaction(() => {
+        this.database.exec(`
+          ALTER TABLE attempts ADD COLUMN owner_process_id INTEGER;
+          ALTER TABLE attempts ADD COLUMN owner_host TEXT;
+          ALTER TABLE attempts ADD COLUMN owner_instance_id TEXT;
+          ALTER TABLE attempts ADD COLUMN lease_expires_at INTEGER;
+          CREATE UNIQUE INDEX idx_one_active_attempt_per_job
+            ON attempts(job_id) WHERE status = 'in_progress';
+        `);
+        this.database.exec(`PRAGMA user_version = ${LEDGER_SCHEMA_VERSION};`);
+      });
       return;
     }
     if (version !== 0) {
@@ -506,6 +613,10 @@ export class BatchLedger {
           estimated_input_tokens INTEGER CHECK (estimated_input_tokens IS NULL OR estimated_input_tokens >= 0),
           estimated_output_tokens INTEGER CHECK (estimated_output_tokens IS NULL OR estimated_output_tokens >= 0),
           validation_status TEXT NOT NULL CHECK (validation_status IN ('valid', 'invalid', 'not_run')),
+          owner_process_id INTEGER,
+          owner_host TEXT,
+          owner_instance_id TEXT,
+          lease_expires_at INTEGER,
           UNIQUE (job_id, attempt_number)
         ) STRICT;
 
@@ -525,6 +636,8 @@ export class BatchLedger {
         CREATE INDEX idx_batch_jobs_job ON batch_jobs(job_id);
         CREATE INDEX idx_jobs_provider_model ON jobs(provider_id, model_id, created_at);
         CREATE INDEX idx_attempts_started ON attempts(request_started_at);
+        CREATE UNIQUE INDEX idx_one_active_attempt_per_job
+          ON attempts(job_id) WHERE status = 'in_progress';
       `);
       this.database.exec(`PRAGMA user_version = ${LEDGER_SCHEMA_VERSION};`);
     });
@@ -832,10 +945,20 @@ export class BatchLedger {
         .prepare(
           `INSERT INTO attempts (
              attempt_id, job_id, attempt_number, status, request_started_at,
-             validation_status
-           ) VALUES (?, ?, ?, 'in_progress', ?, 'not_run');`,
+             validation_status, owner_process_id, owner_host, owner_instance_id,
+             lease_expires_at
+           ) VALUES (?, ?, ?, 'in_progress', ?, 'not_run', ?, ?, ?, ?);`,
         )
-        .run(attemptId, jobId, attemptNumber, now);
+        .run(
+          attemptId,
+          jobId,
+          attemptNumber,
+          now,
+          this.ownerProcessId,
+          this.ownerHost,
+          this.ownerInstanceId,
+          now + this.attemptLeaseMs,
+        );
       this.database
         .prepare(
           `UPDATE jobs SET status = 'in_progress', started_at = ?, completed_at = NULL
@@ -850,6 +973,37 @@ export class BatchLedger {
       throw new Error('The created AI attempt could not be read back.');
     }
     return attempt;
+  }
+
+  renewAttemptLease(jobId: string, attemptId: string): number {
+    requiredText(jobId, 'jobId');
+    requiredText(attemptId, 'attemptId');
+    const now = Date.now();
+    const renewed = this.transaction(() =>
+      this.database
+        .prepare(
+          `UPDATE attempts SET lease_expires_at = ?
+           WHERE attempt_id = ? AND job_id = ? AND status = 'in_progress'
+             AND owner_process_id = ? AND owner_host = ?
+             AND owner_instance_id = ?
+             AND EXISTS (
+               SELECT 1 FROM jobs
+               WHERE jobs.job_id = attempts.job_id AND jobs.status = 'in_progress'
+             );`,
+        )
+        .run(
+          now + this.attemptLeaseMs,
+          attemptId,
+          jobId,
+          this.ownerProcessId,
+          this.ownerHost,
+          this.ownerInstanceId,
+        ).changes,
+    );
+    if (renewed !== 1) {
+      throw new Error('The attempt lease is no longer owned by this ledger process.');
+    }
+    return now + this.attemptLeaseMs;
   }
 
   completeAttempt(
@@ -904,34 +1058,72 @@ export class BatchLedger {
     if (!isSuccess && input.normalizedResult !== undefined) {
       throw new Error('Failed attempts cannot persist assessment results.');
     }
-    const normalizedResultJson =
-      input.normalizedResult === undefined
-        ? null
-        : serializeCanonical(input.normalizedResult);
-    if (
-      normalizedResultJson !== null &&
-      Buffer.byteLength(normalizedResultJson, 'utf8') >
-        MAX_NORMALIZED_RESULT_BYTES
-    ) {
-      throw new RangeError('The normalized assessment result exceeds 1 MB.');
-    }
-
     const now = Date.now();
     const resultId = isSuccess ? randomUUID() : null;
     this.transaction(() => {
       const job = this.database
-        .prepare('SELECT status, schema_version FROM jobs WHERE job_id = ?;')
+        .prepare(
+          `SELECT status, schema_version, component_id, provider_id, model_id
+           FROM jobs WHERE job_id = ?;`,
+        )
         .get(jobId) as DatabaseRow | undefined;
       if (!job || toText(job.status) !== 'in_progress') {
         throw new Error('Only an in-progress AI job can complete an attempt.');
       }
       const attempt = this.database
         .prepare(
-          'SELECT status FROM attempts WHERE attempt_id = ? AND job_id = ?;',
+          `SELECT status, owner_process_id, owner_host, owner_instance_id
+           FROM attempts WHERE attempt_id = ? AND job_id = ?;`,
         )
         .get(attemptId, jobId) as DatabaseRow | undefined;
       if (!attempt || toText(attempt.status) !== 'in_progress') {
         throw new Error('The AI attempt is missing or is no longer in progress.');
+      }
+      if (
+        toNullableNumber(attempt.owner_process_id) !== this.ownerProcessId ||
+        toNullableText(attempt.owner_host) !== this.ownerHost ||
+        toNullableText(attempt.owner_instance_id) !== this.ownerInstanceId
+      ) {
+        throw new Error('The attempt is no longer owned by this ledger process.');
+      }
+
+      let normalizedResultJson: string | null = null;
+      if (isSuccess) {
+        const ruleIds = new Set(
+          (
+            this.database
+              .prepare('SELECT rule_id FROM job_rules WHERE job_id = ?;')
+              .all(jobId) as DatabaseRow[]
+          ).map((rule) => toText(rule.rule_id)),
+        );
+        const evidenceRefIds = new Set(
+          (
+            this.database
+              .prepare(
+                'SELECT evidence_ref_id FROM job_evidence_refs WHERE job_id = ?;',
+              )
+              .all(jobId) as DatabaseRow[]
+          ).map((reference) => toText(reference.evidence_ref_id)),
+        );
+        normalizedResultJson = JSON.stringify(
+          validateAssessmentResult(
+            input.normalizedResult,
+            {
+              componentId: toText(job.component_id),
+              providerId: toText(job.provider_id),
+              modelId: toText(job.model_id),
+              schemaVersion: toText(job.schema_version),
+            },
+            ruleIds,
+            evidenceRefIds,
+          ),
+        );
+        if (
+          Buffer.byteLength(normalizedResultJson, 'utf8') >
+          MAX_NORMALIZED_RESULT_BYTES
+        ) {
+          throw new RangeError('The normalized assessment result exceeds 1 MB.');
+        }
       }
 
       this.database
@@ -1171,27 +1363,66 @@ export class BatchLedger {
   recoverInterruptedJobs(): number {
     return this.transaction(() => {
       const now = Date.now();
-      const affected = this.database
-        .prepare(
-          `UPDATE attempts SET status = 'unknown_outcome', response_received_at = ?,
-             error_class = 'process_interrupted'
-           WHERE status = 'in_progress';`,
-        )
-        .run(now);
-      const jobs = this.database
+      const candidates = this.database
         .prepare(`SELECT job_id FROM jobs WHERE status = 'in_progress';`)
         .all() as DatabaseRow[];
-      this.database
-        .prepare(
-          `UPDATE jobs SET status = 'unknown_outcome', completed_at = ?,
-             error_class = 'process_interrupted', validation_status = 'not_run'
-           WHERE status = 'in_progress';`,
-        )
-        .run(now);
-      for (const job of jobs) {
-        this.refreshBatchesForJob(toText(job.job_id));
+      let recovered = 0;
+      for (const job of candidates) {
+        const jobId = toText(job.job_id);
+        const attempts = this.database
+          .prepare(
+            `SELECT attempt_id, owner_process_id, owner_host, owner_instance_id,
+                    lease_expires_at
+             FROM attempts WHERE job_id = ? AND status = 'in_progress';`,
+          )
+          .all(jobId) as DatabaseRow[];
+        for (const attempt of attempts) {
+          const ownerProcessId = toNullableNumber(attempt.owner_process_id);
+          const leaseExpiresAt = toNullableNumber(attempt.lease_expires_at);
+          const ownerHost = toNullableText(attempt.owner_host);
+          const ownerInstanceId = toNullableText(attempt.owner_instance_id);
+          if (
+            ownerProcessId === null ||
+            leaseExpiresAt === null ||
+            ownerHost !== this.ownerHost ||
+            ownerInstanceId === null ||
+            leaseExpiresAt > now ||
+            isProcessAlive(ownerProcessId)
+          ) {
+            continue;
+          }
+          const claim = this.database
+            .prepare(
+              `UPDATE attempts SET status = 'unknown_outcome',
+                 response_received_at = ?, error_class = 'process_interrupted'
+               WHERE attempt_id = ? AND job_id = ? AND status = 'in_progress'
+                 AND owner_process_id = ? AND owner_host = ?
+                 AND owner_instance_id = ? AND lease_expires_at <= ?;`,
+            )
+            .run(
+              now,
+              toText(attempt.attempt_id),
+              jobId,
+              ownerProcessId,
+              ownerHost,
+              ownerInstanceId,
+              now,
+            );
+          if (claim.changes !== 1) {
+            continue;
+          }
+          this.database
+            .prepare(
+              `UPDATE jobs SET status = 'unknown_outcome', completed_at = ?,
+                 error_class = 'process_interrupted', validation_status = 'not_run'
+               WHERE job_id = ? AND status = 'in_progress';`,
+            )
+            .run(now, jobId);
+          this.refreshBatchesForJob(jobId);
+          recovered += 1;
+        }
       }
-      return Number(affected.changes);
+      return recovered;
     });
   }
 

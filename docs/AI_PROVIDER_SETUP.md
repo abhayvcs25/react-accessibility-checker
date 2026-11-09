@@ -14,9 +14,11 @@ Free account allows all three candidates and shows 30 RPM, 1,000 RPD, 8,000 TPM,
 and 200,000 TPD per model. The operator also confirmed no payment method,
 purchased credits, or auto-recharge; Groq account eligibility is recorded as
 zero-cost eligible based on that dashboard report. Runtime compatibility is
-untested. Groq's current documentation lists Qwen strict support in its
-supported-model table but contradicts itself in a later summary table, so
-Qwen's strict-schema status remains provisional.
+untested. The operator reports that all three Groq models support strict and
+best-effort structured output and provisionally accepts that for implementation
+testing. Groq's public documentation still contradicts itself about Qwen strict
+support, so the operator finding is not treated as runtime verification and
+all candidates remain blocked.
 
 The operator reports a Cloudflare Workers Free account, no paid plan/payment
 method/AI Gateway credits, and 0 Neurons used at verification. Based on that
@@ -63,7 +65,15 @@ zero-cost guarantee.
 
 The durable batch/job ledger uses Node.js built-in `node:sqlite` and requires
 Node.js 24.11.0 or later. SQLite is experimental in this Node release.
-Terminal job, attempt, and normalized-result records are retained for seven
-days by default (`USAGE_LEDGER_RETENTION_DAYS`); active jobs are not removed.
-The existing JSON usage ledger and `/api/ai/usage` data remain unchanged and
-are not imported or deleted. Raw provider response bodies are not stored.
+Terminal jobs, attempts, and normalized results are retained for seven days
+from job completion by default (`USAGE_LEDGER_RETENTION_DAYS`). Expired job
+cleanup runs when the ledger opens or on an explicit cleanup call; batches,
+snapshots, and projects are not automatically removed. The existing JSON usage
+ledger and `/api/ai/usage` data remain unchanged and are not imported, migrated,
+modified, or deleted. Raw provider response bodies are not stored.
+
+Attempts have per-ledger process ownership and renewable leases. Recovery is an
+explicit operation: it only recovers expired work when its recorded owner is
+confirmed absent on the same host. Ownerless legacy attempts and unknown-host
+owners are left untouched. Recovery is not enabled at startup and is not
+integrated with a scheduler.

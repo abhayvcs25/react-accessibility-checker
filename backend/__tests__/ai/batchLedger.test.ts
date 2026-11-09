@@ -1,8 +1,10 @@
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createInterface } from 'node:readline';
 import { Worker } from 'node:worker_threads';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BatchLedger, type CreateJobInput } from '../../src/ai/batchLedger.js';
@@ -46,6 +48,22 @@ function jobInput(
     promptVersion: 'prompt-v1',
     schemaVersion: 'schema-v1',
     modelConfigHash: hash('model-config-v1'),
+    ...overrides,
+  };
+}
+
+function validAssessment(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    targetId: 'component-1',
+    ruleId: 'color-contrast',
+    status: 'potential_issue',
+    explanation: 'A visible text/background contrast issue was detected.',
+    evidenceRefs: ['evidence-1'],
+    confidence: null,
+    providerId: 'groq',
+    modelId: 'openai/gpt-oss-20b',
     ...overrides,
   };
 }
@@ -97,7 +115,7 @@ describe('persistent AI batch ledger', () => {
     ledger.completeAttempt(first.job.jobId, attempt.attemptId, {
       status: 'succeeded',
       validationStatus: 'valid',
-      normalizedResult: { status: 'pass' },
+      normalizedResult: validAssessment(),
     });
     const secondBatch = createBatch({ plannedJobCount: 1 });
     const duplicate = ledger.createJob(jobInput(secondBatch.batchId));
@@ -137,21 +155,12 @@ describe('persistent AI batch ledger', () => {
     const changedPrompt = ledger.createJob(
       jobInput(changedPromptBatch.batchId, { promptVersion: 'prompt-v2' }),
     );
-    const changedSchemaBatch = createBatch({
-      contentHash: hash('content-hash-v5'),
-      schemaVersion: 'schema-v2',
-    });
-    const changedSchema = ledger.createJob(
-      jobInput(changedSchemaBatch.batchId, { schemaVersion: 'schema-v2' }),
-    );
-
     expect(new Set([
       initial.job.idempotencyKey,
       changedSnapshot.job.idempotencyKey,
       otherModel.job.idempotencyKey,
       changedPrompt.job.idempotencyKey,
-      changedSchema.job.idempotencyKey,
-    ]).size).toBe(5);
+    ]).size).toBe(4);
     expect(otherModel.job.modelId).toBe('openai/gpt-oss-120b');
   });
 
@@ -175,6 +184,34 @@ describe('persistent AI batch ledger', () => {
     } finally {
       secondConnection.close();
     }
+  });
+
+  it('includes request payload and canonical evidence references in job identity', () => {
+    const batch = createBatch();
+    const baseline = ledger.createJob(
+      jobInput(batch.batchId, { evidenceRefIds: ['evidence-1', 'evidence-2'] }),
+    );
+    const reorderedEvidence = ledger.createJob(
+      jobInput(batch.batchId, {
+        evidenceRefIds: ['evidence-2', 'evidence-1', 'evidence-1'],
+      }),
+    );
+    const changedPayload = ledger.createJob(
+      jobInput(batch.batchId, { requestPayloadHash: hash('different-request') }),
+    );
+    const changedEvidence = ledger.createJob(
+      jobInput(batch.batchId, { evidenceRefIds: ['evidence-3'] }),
+    );
+
+    expect(reorderedEvidence.created).toBe(false);
+    expect(reorderedEvidence.job.jobId).toBe(baseline.job.jobId);
+    expect(changedPayload.created).toBe(true);
+    expect(changedEvidence.created).toBe(true);
+    expect(new Set([
+      baseline.job.idempotencyKey,
+      changedPayload.job.idempotencyKey,
+      changedEvidence.job.idempotencyKey,
+    ]).size).toBe(3);
   });
 
   it('creates one durable job when independent workers race on the same key', async () => {
@@ -282,8 +319,13 @@ describe('persistent AI batch ledger', () => {
                     ready?: boolean;
                     created?: boolean;
                     jobId?: string;
+                    error?: string;
                   }) => {
                     if (message.ready) {
+                      return;
+                    }
+                    if (message.error) {
+                      reject(new Error(message.error));
                       return;
                     }
                     if (typeof message.created !== 'boolean' || !message.jobId) {
@@ -321,12 +363,7 @@ describe('persistent AI batch ledger', () => {
       estimatedInputTokens: 18,
       estimatedOutputTokens: 16,
       validationStatus: 'valid',
-      normalizedResult: {
-        ruleId: 'color-contrast',
-        targetId: 'component-1',
-        status: 'pass',
-        evidenceRefs: ['evidence-1'],
-      },
+      normalizedResult: validAssessment(),
     });
 
     ledger.close();
@@ -426,12 +463,172 @@ describe('persistent AI batch ledger', () => {
     }
   });
 
-  it('marks interrupted in-progress attempts as uncertain on recovery', () => {
+  it('does not recover a live process owner and fences other ledger instances', () => {
     const batch = createBatch();
     const job = ledger.createJob(jobInput(batch.batchId)).job;
     const attempt = ledger.beginAttempt(job.jobId);
+    const database = new DatabaseSync(ledgerPath);
+    database
+      .prepare('UPDATE attempts SET lease_expires_at = ? WHERE attempt_id = ?;')
+      .run(Date.now() - 1, attempt.attemptId);
+    database.close();
+    const competingLedger = new BatchLedger({ filePath: ledgerPath });
 
-    expect(ledger.recoverInterruptedJobs()).toBe(1);
+    expect(competingLedger.recoverInterruptedJobs()).toBe(0);
+    expect(() =>
+      competingLedger.renewAttemptLease(job.jobId, attempt.attemptId),
+    ).toThrow('The attempt lease is no longer owned by this ledger process.');
+    expect(() =>
+      competingLedger.completeAttempt(job.jobId, attempt.attemptId, {
+        status: 'succeeded',
+        validationStatus: 'valid',
+        normalizedResult: validAssessment(),
+      }),
+    ).toThrow('The attempt is no longer owned by this ledger process.');
+    expect(ledger.getJob(job.jobId)?.status).toBe('in_progress');
+    expect(ledger.renewAttemptLease(job.jobId, attempt.attemptId)).toBeGreaterThan(
+      Date.now(),
+    );
+    competingLedger.close();
+
+    ledger.completeAttempt(job.jobId, attempt.attemptId, {
+      status: 'succeeded',
+      validationStatus: 'valid',
+      normalizedResult: validAssessment(),
+    });
+    expect(ledger.getJob(job.jobId)?.status).toBe('succeeded');
+  });
+
+  it('does not recover a separate live process after its lease expires', async () => {
+    const childScript = `
+      import { BatchLedger } from './src/ai/batchLedger.ts';
+      const payload = JSON.parse(process.env.RAC_TEST_PAYLOAD);
+      const ledger = new BatchLedger({ filePath: process.env.RAC_TEST_LEDGER_PATH });
+      const batch = ledger.createBatch(payload.batch);
+      const job = ledger.createJob({ ...payload.job, batchId: batch.batchId }).job;
+      const attempt = ledger.beginAttempt(job.jobId);
+      console.log(JSON.stringify({ ready: true, jobId: job.jobId, attemptId: attempt.attemptId }));
+      process.stdin.once('data', () => {
+        try {
+          const completed = ledger.completeAttempt(job.jobId, attempt.attemptId, payload.completion);
+          console.log(JSON.stringify({ completed: completed.status === 'succeeded' }));
+        } catch (error) {
+          console.log(JSON.stringify({ failure: error.message }));
+          process.exitCode = 1;
+        } finally {
+          ledger.close();
+        }
+      });
+    `;
+    const child = spawn(
+      process.execPath,
+      [
+        '--import',
+        './node_modules/tsx/dist/loader.mjs',
+        '--input-type=module',
+        '-e',
+        childScript,
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          RAC_TEST_LEDGER_PATH: ledgerPath,
+          RAC_TEST_PAYLOAD: JSON.stringify({
+            batch: { ...batchInput, plannedJobCount: 1 },
+            job: jobInput('batch-created-by-child'),
+            completion: {
+              status: 'succeeded',
+              validationStatus: 'valid',
+              normalizedResult: validAssessment(),
+            },
+          }),
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
+    const output = createInterface({ input: child.stdout });
+    let childStderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      childStderr += chunk.toString();
+    });
+    const messages = (async function* () {
+      for await (const line of output) {
+        yield JSON.parse(line) as {
+          ready?: boolean;
+          jobId?: string;
+          attemptId?: string;
+          completed?: boolean;
+          failure?: string;
+        };
+      }
+    })();
+
+    try {
+      const ready = await messages.next();
+      if (!ready.value?.ready) {
+        throw new Error(`The child process failed to start: ${childStderr}`);
+      }
+      const jobId = ready.value?.jobId;
+      const attemptId = ready.value?.attemptId;
+      if (!jobId || !attemptId) {
+        throw new Error('The child process did not return its active attempt.');
+      }
+
+      const database = new DatabaseSync(ledgerPath);
+      database
+        .prepare('UPDATE attempts SET lease_expires_at = ? WHERE attempt_id = ?;')
+        .run(Date.now() - 1, attemptId);
+      database.close();
+
+      expect(ledger.recoverInterruptedJobs()).toBe(0);
+      child.stdin.end('complete\n');
+      const completion = await messages.next();
+      expect(completion.value?.completed).toBe(true);
+      expect(completion.value?.failure).toBeUndefined();
+      expect(ledger.getJob(jobId)?.status).toBe('succeeded');
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', resolve);
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      output.close();
+      if (child.exitCode === null) {
+        child.kill();
+      }
+    }
+  }, 15_000);
+
+  it('atomically recovers only expired leases owned by dead processes', () => {
+    const batch = createBatch();
+    const job = ledger.createJob(jobInput(batch.batchId)).job;
+    const attempt = ledger.beginAttempt(job.jobId);
+    const deadProcessId = Number(
+      execFileSync(
+        process.execPath,
+        ['-e', 'process.stdout.write(String(process.pid))'],
+        { encoding: 'utf8' },
+      ),
+    );
+    expect(Number.isSafeInteger(deadProcessId)).toBe(true);
+
+    const database = new DatabaseSync(ledgerPath);
+    database
+      .prepare(
+        'UPDATE attempts SET owner_process_id = ?, lease_expires_at = ? WHERE attempt_id = ?;',
+      )
+      .run(deadProcessId, Date.now() - 1, attempt.attemptId);
+    database.close();
+    const competingLedger = new BatchLedger({ filePath: ledgerPath });
+
+    const recoveryResults = [
+      ledger.recoverInterruptedJobs(),
+      competingLedger.recoverInterruptedJobs(),
+    ];
+    competingLedger.close();
+
+    expect(recoveryResults).toEqual([1, 0]);
     expect(ledger.getJob(job.jobId)?.status).toBe('unknown_outcome');
     expect(ledger.getAttempts(job.jobId)).toMatchObject([
       {
@@ -440,6 +637,128 @@ describe('persistent AI batch ledger', () => {
         errorClass: 'process_interrupted',
       },
     ]);
+    const retry = ledger.beginAttempt(job.jobId, {
+      retryRequested: true,
+      acknowledgePossibleDuplicate: true,
+    });
+    expect(retry.attemptId).not.toBe(attempt.attemptId);
+    expect(() =>
+      ledger.completeAttempt(job.jobId, attempt.attemptId, {
+        status: 'succeeded',
+        validationStatus: 'valid',
+        normalizedResult: validAssessment(),
+      }),
+    ).toThrow('The AI attempt is missing or is no longer in progress.');
+  });
+
+  it('migrates schema v1 without claiming or recovering ownerless active attempts', () => {
+    const batch = createBatch();
+    const job = ledger.createJob(jobInput(batch.batchId)).job;
+    const attempt = ledger.beginAttempt(job.jobId);
+    ledger.close();
+
+    const legacyDatabase = new DatabaseSync(ledgerPath);
+    legacyDatabase.exec(`
+      DROP INDEX idx_one_active_attempt_per_job;
+      ALTER TABLE attempts DROP COLUMN lease_expires_at;
+      ALTER TABLE attempts DROP COLUMN owner_instance_id;
+      ALTER TABLE attempts DROP COLUMN owner_host;
+      ALTER TABLE attempts DROP COLUMN owner_process_id;
+      PRAGMA user_version = 1;
+    `);
+    legacyDatabase.close();
+    ledger = new BatchLedger({ filePath: ledgerPath });
+
+    expect(ledger.recoverInterruptedJobs()).toBe(0);
+    expect(ledger.getJob(job.jobId)?.status).toBe('in_progress');
+    expect(ledger.getAttempts(job.jobId)[0]?.status).toBe('in_progress');
+    expect(() =>
+      ledger.completeAttempt(job.jobId, attempt.attemptId, {
+        status: 'succeeded',
+        validationStatus: 'valid',
+        normalizedResult: validAssessment(),
+      }),
+    ).toThrow('The attempt is no longer owned by this ledger process.');
+  });
+
+  it('rejects results with incompatible schema or mismatched job/evidence identity', () => {
+    const invalidCases = [
+      {
+        name: 'unknown schema version',
+        schemaVersion: 'schema-v2',
+        result: validAssessment(),
+      },
+      {
+        name: 'wrong target',
+        schemaVersion: 'schema-v1',
+        result: validAssessment({ targetId: 'other-component' }),
+      },
+      {
+        name: 'unpermitted evidence',
+        schemaVersion: 'schema-v1',
+        result: validAssessment({ evidenceRefs: ['not-in-job-context'] }),
+      },
+      {
+        name: 'unassigned rule',
+        schemaVersion: 'schema-v1',
+        result: validAssessment({ ruleId: 'unassigned-rule' }),
+      },
+      {
+        name: 'wrong provider identity',
+        schemaVersion: 'schema-v1',
+        result: validAssessment({ providerId: 'cloudflare-workers-ai' }),
+      },
+    ];
+
+    for (const [index, invalidCase] of invalidCases.entries()) {
+      const batch = createBatch({
+        contentHash: hash(`invalid-result-${index}`),
+        schemaVersion: invalidCase.schemaVersion,
+      });
+      const job = ledger.createJob(
+        jobInput(batch.batchId, { schemaVersion: invalidCase.schemaVersion }),
+      ).job;
+      const attempt = ledger.beginAttempt(job.jobId);
+
+      expect(
+        () =>
+          ledger.completeAttempt(job.jobId, attempt.attemptId, {
+            status: 'succeeded',
+            validationStatus: 'valid',
+            normalizedResult: invalidCase.result,
+          }),
+        invalidCase.name,
+      ).toThrow();
+      expect(ledger.getJob(job.jobId)?.status).toBe('in_progress');
+      expect(ledger.getAttempts(job.jobId)[0]?.status).toBe('in_progress');
+      expect(ledger.getAssessmentResult(job.jobId)).toBeUndefined();
+    }
+  });
+
+  it('rolls back attempt and job changes if result persistence fails', () => {
+    const batch = createBatch();
+    const job = ledger.createJob(jobInput(batch.batchId)).job;
+    const attempt = ledger.beginAttempt(job.jobId);
+    const database = new DatabaseSync(ledgerPath);
+    database.exec(`
+      CREATE TRIGGER reject_assessment_result
+      BEFORE INSERT ON assessment_results
+      BEGIN
+        SELECT RAISE(ABORT, 'injected result persistence failure');
+      END;
+    `);
+    database.close();
+
+    expect(() =>
+      ledger.completeAttempt(job.jobId, attempt.attemptId, {
+        status: 'succeeded',
+        validationStatus: 'valid',
+        normalizedResult: validAssessment(),
+      }),
+    ).toThrow('injected result persistence failure');
+    expect(ledger.getJob(job.jobId)?.status).toBe('in_progress');
+    expect(ledger.getAttempts(job.jobId)[0]?.status).toBe('in_progress');
+    expect(ledger.getAssessmentResult(job.jobId)).toBeUndefined();
   });
 
   it('expires terminal jobs after seven days but preserves active jobs', () => {
@@ -463,6 +782,19 @@ describe('persistent AI batch ledger', () => {
     expect(ledger.getJob(doneJob.jobId)).toBeUndefined();
     expect(ledger.getAttempts(doneJob.jobId)).toEqual([]);
     expect(ledger.getJob(activeJob.jobId)?.status).toBe('in_progress');
+    expect(ledger.getBatch(batch.batchId)).toBeDefined();
+    const database = new DatabaseSync(ledgerPath, { readOnly: true });
+    expect(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM projects WHERE project_id = ?;')
+        .get(batch.projectId),
+    ).toMatchObject({ count: 1 });
+    expect(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM snapshots WHERE snapshot_id = ?;')
+        .get(batch.snapshotId),
+    ).toMatchObject({ count: 1 });
+    database.close();
   });
 
   it('deletes project data and all linked batch/job/result records', () => {
@@ -472,7 +804,7 @@ describe('persistent AI batch ledger', () => {
     ledger.completeAttempt(job.jobId, attempt.attemptId, {
       status: 'succeeded',
       validationStatus: 'valid',
-      normalizedResult: { status: 'pass' },
+      normalizedResult: validAssessment(),
     });
 
     expect(ledger.deleteProject(batch.projectId)).toBe(true);

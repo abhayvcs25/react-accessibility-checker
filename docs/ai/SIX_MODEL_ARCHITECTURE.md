@@ -14,23 +14,21 @@ Reuse the current V2 HTML extraction and evidence types. The system should be
 able to schedule six model assessments concurrently, but model eligibility is
 per-model and fail-closed.
 
-**Do not enable all six candidates yet.** The provider review marks all six
-partially verified. Groq no-purchase access and account limits are unverified;
-Cloudflare's free allocation is conditional on the Workers Free account, and
-JSON Schema support and numeric maximum output limits are not established for
-the three exact models. Until account and capability requirements are
-confirmed, those candidates must remain blocked rather than silently replaced.
-This document makes no live requests and does not claim that any provider is
-runtime-verified.
+**Do not enable any candidate yet.** The operator reports Groq Free account
+access to all three listed models without a payment method, purchased credits,
+or auto-recharge, and a Workers Free account with a shared 10,000-Neuron daily
+allocation. These are account-level findings, not runtime verification.
+Groq's public strict-schema documentation is internally inconsistent for
+Qwen; the operator's review provisionally accepts its supported-model listing
+for implementation testing. Cloudflare's exact-model JSON/JSON Schema
+compatibility and the accessibility result schema remain untested. All six
+models remain blocked and operator-disabled pending the remaining verification
+gates. No live requests are claimed here.
 
-Recommended storage is one local SQLite ledger replacing the current JSON
-usage ledger after an approved, tested migration. The existing JSON file is a
-metrics store, not an atomic job/idempotency store. Its in-memory state and
-temporary-file-plus-rename writes do not provide cross-process reservations or
-unique idempotency constraints. If deployment is guaranteed to remain a single
-backend process, extending that file is a possible lower-dependency alternative;
-that deployment guarantee is not established by the audit. The storage choice
-is a human approval gate.
+The approved durable batch/job store is a local SQLite database using Node.js
+24.11.0+ built-in `node:sqlite` (`DatabaseSync`). It coexists with the existing
+JSON usage ledger: Prompt 09 does not import, replace, modify, or delete that
+file. The JSON ledger continues to serve the legacy usage endpoint separately.
 
 ## Evidence-based current state
 
@@ -40,8 +38,8 @@ is a human approval gate.
 | Extraction | The production route accepts one HTML file and uses V2 extraction/adaptation. A separate utility accepts caller-supplied HTML documents. | Reuse current extraction. Add a future source adapter for React projects/URLs; do not claim it exists now. |
 | AI execution | Production uses one selected Gemini/OpenRouter model. The six-entry benchmark is serial and is not the target scheduler. | Independently configured Groq and Cloudflare model adapters, scheduled as bounded jobs. |
 | Rules | Three contextual rules are active. Twenty rule definitions are proposed, not implemented as a complete assessment set. | Keep a versioned rule registry; only schedule rules with reviewed definitions and available evidence. |
-| Persistence | `backend/src/ai/usage.ts` stores metrics in a local JSON file. The remote-result cache and in-flight joining are process-local. | One durable ledger for snapshots, batches, jobs, attempts, results, and usage. |
-| Verification | Provider documentation has been reviewed; account entitlements and live responses have not. | Require account-level eligibility before enabling a model. Local tests use mocks only. |
+| Persistence | `backend/src/ai/usage.ts` stores historical metrics in a JSON file. Prompt 09 adds a separate SQLite batch/job ledger; no usage migration is performed. | Keep job idempotency and attempts in SQLite; preserve the JSON usage endpoint unchanged unless a separately approved migration is undertaken. |
+| Verification | Provider documentation and operator-reported account evidence are recorded in the verification report. No candidate has runtime verification. | Require fail-closed eligibility and separate documentation, account, and runtime evidence. Local tests use mocks only. |
 
 ## 1. Request flow and protected boundary
 
@@ -106,12 +104,12 @@ verification must be distinguishable in the record.
 
 | Candidate | Current evidence | Initial eligibility |
 |---|---|---|
-| `openai/gpt-oss-120b` | Groq documents strict JSON Schema; no-purchase quota/account plan not verified. | `blocked_unverified` until dashboard confirms free access and actual limits. |
-| `openai/gpt-oss-20b` | Groq documents strict JSON Schema; no-purchase quota/account plan not verified. | `blocked_unverified` until dashboard confirms free access and actual limits. |
-| `qwen/qwen3.8-27b` | Groq documents strict JSON Schema; no-purchase quota/account plan not verified. | `blocked_unverified` until dashboard confirms free access and actual limits. |
-| `@cf/zai-org/glm-4.7-flash` | Workers Free has a published shared 10,000-Neuron daily allocation; exact-account plan, model JSON Schema support, and numeric output cap need confirmation. | `blocked_unverified` until account and response requirements are confirmed. |
-| `@cf/nvidia/nemotron-3-120b-a12b` | Same Workers Free account condition; model JSON Schema support and numeric output cap need confirmation. | `blocked_unverified` until account and response requirements are confirmed. |
-| `@cf/google/gemma-4-26b-a4b-it` | Same Workers Free account condition; model JSON Schema support and numeric output cap need confirmation. | `blocked_unverified` until account and response requirements are confirmed. |
+| `openai/gpt-oss-120b` | Operator reports Free-plan access, exact model allowed, no payment method/credits/auto-recharge, and account limits; runtime compatibility remains untested. | `blocked_unverified` until implementation and runtime checks are approved. |
+| `openai/gpt-oss-20b` | Same operator-reported Free-plan and organization-limit evidence; runtime compatibility remains untested. | `blocked_unverified` until implementation and runtime checks are approved. |
+| `qwen/qwen3.8-27b` | Same account evidence. Operator provisionally accepts strict and best-effort support for implementation testing; Groq's public strict-support documentation remains contradictory. | `blocked_unverified` until the documentation conflict/runtime check and implementation gates are resolved. |
+| `@cf/zai-org/glm-4.7-flash` | Operator reports Workers Free, no paid billing route, and the shared 10,000-Neuron daily allocation. Exact-model JSON Schema behavior remains untested; output max is operator-reported as 4,096. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
+| `@cf/nvidia/nemotron-3-120b-a12b` | Same operator-reported Workers Free evidence; exact-model JSON Schema behavior remains untested; output max is operator-reported as 16,384. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
+| `@cf/google/gemma-4-26b-a4b-it` | Same operator-reported Workers Free evidence; exact-model JSON Schema behavior remains untested; output max is operator-reported as 8,192. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
 
 The Cloudflare free allocation is shared across the account, not six separate
 model quotas. The Groq Developer-plan rate table is not evidence of free-tier
@@ -123,14 +121,19 @@ automatic substitution.
 **Prompt 06 configuration state:** `backend/src/ai/config.ts` records the six
 official candidate IDs as metadata only. Every candidate is
 `blocked_unverified`, operator-disabled, and excluded from
-`getEligibleModels()` because Phase 02 verified none as strict-₹0 eligible.
-Groq's strict-schema/context/output facts and Cloudflare's documented context
-facts are retained; unsupported Cloudflare output limits and JSON capabilities
-remain `null`/`unverified`. Account-specific request/token limits are also
-`null`. Published provider limits are tagged with their scope and are not used
-as account entitlements. Application concurrency safeguards are 1 per model,
-3 per provider, and 6 total; RPM/TPM dispatch limits remain unset until verified
-account limits are supplied. No provider transport or live check is included.
+`getEligibleModels()` because none has complete documentation, account, and
+runtime evidence for the configured strict structured-output requirement.
+Groq account eligibility and per-model limits are operator-reported; its Qwen
+strict capability remains provisional because of the public documentation
+conflict. Cloudflare account eligibility is operator-reported within the
+shared daily free allocation. Its reported output maxima are 4,096 (GLM),
+16,384 (Nemotron), and 8,192 (Gemma), with a 2,048-token application cap;
+maximum input remains unknown. Exact-model Cloudflare JSON/JSON Schema
+behavior remains provisional. Per-model Cloudflare request/token limits remain
+unset. Published provider limits are scoped separately from account
+entitlements. Application concurrency safeguards are 1 per model, 3 per
+provider, and 6 total. The provider adapters are implemented but isolated;
+there is no live check or assessment-pipeline integration.
 
 ## 3. Snapshot, batch, and assessment job contracts
 
@@ -169,20 +172,13 @@ limited to active, reviewed rules and their available evidence.
 
 ### Recommendation
 
-Use one local SQLite database as the durable source of truth for AI batches,
-jobs, responses, and token accounting. The audit found no existing database
-and established that the JSON file is loaded into process memory and replaced
-from a per-process temporary file without a transaction, unique-key
-reservation, or cross-process lock. Those properties are insufficient for
-atomic idempotency if two backend processes schedule the same work.
-
-The deployment model is not known. If the owner explicitly guarantees one
-backend process and no concurrent writers across restarts, a transactional
-single-process JSON extension could be reconsidered to avoid a database
-dependency. Otherwise SQLite's unique constraints and transactions are the
-smallest reliable local mechanism identified. Confirm the supported SQLite
-driver and Windows packaging/build behavior before implementation; no driver
-or dependency is selected or installed by this design.
+Use local SQLite as the durable source of truth for AI batches, jobs, attempts,
+and normalized assessment results. The selected implementation is Node.js
+built-in `node:sqlite` (`DatabaseSync`), with Node.js 24.11.0 or later and no
+additional SQLite package. SQLite unique constraints and transactions provide
+atomic idempotency across connections. The existing JSON usage ledger remains
+an independent historical metrics store; it is not migrated or replaced by
+Prompt 09.
 
 ### Logical tables
 
@@ -192,7 +188,7 @@ or dependency is selected or installed by this design.
 | `snapshots` | `snapshot_id`, `project_id`, canonical content hash, extraction version, rule-registry version, created time; unique project/content/config tuple. |
 | `batches` | `batch_id`, project/snapshot foreign keys, prompt/schema versions, state, planned and terminal counts, timestamps. |
 | `jobs` | `job_id`, batch foreign key, unique deterministic `idempotency_key`, provider/model, target/rule, context hash, evidence-reference IDs, request-payload hash, state, timestamps, normalized result reference. |
-| `attempts` | `attempt_id`, job foreign key, unique `(job_id, attempt_number)`, request/response timestamps, provider request ID, HTTP/finish metadata, retry-after, error class, estimated and provider-reported token counts, response validation state, optional short-lived raw-response reference. |
+| `attempts` | `attempt_id`, job foreign key, unique `(job_id, attempt_number)`, request/response timestamps, provider request ID, HTTP/finish metadata, retry-after, error class, estimated and provider-reported token counts, response validation state, owner process/host/instance, renewable lease, optional short-lived raw-response reference. |
 | `assessment_results` | `result_id`, unique successful `attempt_id`, job foreign key, normalized validated assessment fields or schema-versioned JSON, validation timestamp, creation time. The job's result reference points to this row; invalid or incomplete attempts have no result row. |
 | `analysis_durations` | Batch or analysis reference and elapsed duration. Preserve the existing usage API's duration reporting without counting it as a provider request. |
 
@@ -208,22 +204,34 @@ error metadata on unsuccessful attempts without converting them into result
 rows; raw response bodies remain optional, short-lived, and disabled by default.
 Do not store API keys. Raw provider response retention is disabled.
 
-The approved Prompt 09 implementation decision uses Node.js built-in
-`node:sqlite` (`DatabaseSync`) with Node.js 24.11.0 or later. Durable terminal
-job, attempt, and normalized result data is retained for seven days from job
-completion, configurable with `USAGE_LEDGER_RETENTION_DAYS` (default `7`).
-Expired terminal jobs and their attempts/results are deleted automatically;
-active jobs are never deleted by retention cleanup. Raw provider response
-bodies remain disabled. The existing JSON usage ledger is preserved without
-automatic import, modification, or deletion; it continues to serve the legacy
-usage reporting API separately from the new batch ledger until a later
-explicitly approved consolidation.
+The ledger accepts only its explicitly supported assessment result schema
+version. Before success persistence it checks the required result fields,
+target/rule/provider/model identity, and that every evidence reference belongs
+to the job's permitted evidence set. Unsupported schema versions or invalid
+results leave the attempt and job in progress for explicit failure handling;
+they are not stored as successful results.
 
-The existing JSON usage ledger at `RAC_AI_USAGE_FILE`/`ai-usage.json` and the
-existing `/api/ai/usage` response shape are preserved unchanged. The approved
-Prompt 09 scope does not import, migrate, or delete historical JSON usage. Any
-future consolidation into SQLite requires a separate approved, idempotent
-migration with parity tests and an operator-approved backup/removal step.
+Terminal job, attempt, and normalized-result rows are retained for seven days
+from job completion, configurable with `USAGE_LEDGER_RETENTION_DAYS` (default
+`7`). Cleanup runs when the ledger opens and when its cleanup method is
+explicitly called. It deletes expired terminal jobs and their attempts/results;
+queued and in-progress jobs are excluded. Batches, snapshots, and projects are
+not removed by automatic retention cleanup and remain until project deletion.
+Raw provider response bodies remain disabled. The existing JSON usage ledger
+at `RAC_AI_USAGE_FILE`/`ai-usage.json` is preserved without import,
+modification, or deletion and continues serving `/api/ai/usage` unchanged.
+Any future consolidation requires a separate approved migration.
+
+Attempt ownership is recorded with process ID, host, per-ledger instance ID,
+and a renewable lease. Explicit recovery uses an atomic SQLite write
+transaction and only classifies an attempt as uncertain when its lease has
+expired and its owner process is confirmed absent on the same host. Unknown
+host/owner cases are left untouched. Recovery is not invoked at startup and is
+not integrated with a scheduler. Legacy in-progress attempts without ownership
+metadata are not automatically recovered.
+The version-1-to-version-2 migration preserves existing records and leaves
+legacy in-progress attempts without ownership metadata for explicit operator
+resolution rather than guessing that their processes are dead.
 
 SQLite transactions should reserve a job idempotency key before enqueueing,
 append each attempt before network I/O, and commit its terminal state and
@@ -240,7 +248,9 @@ normalized structured assessment responses and necessary terminal job/attempt
 metadata for seven days from job completion, configurable with
 `USAGE_LEDGER_RETENTION_DAYS` (default `7`); then automatically delete expired
 terminal job records and their attempts/results. Active jobs are not removed
-by retention cleanup. Project-level deletion must also cascade immediately.
+by retention cleanup. Batches, snapshots, and projects remain until explicit
+project deletion. Cleanup runs on ledger open or an explicit cleanup call.
+Project-level deletion must also cascade immediately.
 Raw provider response retention is disabled. Do not log raw context or
 responses. Restrict the database to the local application user and verify
 Windows file permissions in implementation rather than assuming Unix file-mode
@@ -255,7 +265,8 @@ project_id
 snapshot_content_hash + extraction_version
 provider_id + exact_model_id
 target_id + sorted rule_id set (one rule in the initial job contract)
-context_hash
+context_hash + canonical evidence-reference IDs
+request_payload_hash
 prompt_version + schema_version
 model request configuration that changes assessment semantics
 ```
@@ -276,10 +287,14 @@ Job states and deduplication behavior:
 | `permanent_failed` / `blocked` | Preserve the reason; no automatic retry or model substitution. |
 | `unknown_outcome` | Do not automatically resend. Require provider reconciliation if available or an explicit operator retry acknowledging possible duplicate provider processing. |
 
-Persist `in_progress` before sending. On restart, mark jobs left in a sending
-state as `unknown_outcome` unless there is durable evidence that the request
-was never sent. Neither provider is assumed to support an idempotency token
-until its official API documents one.
+Persist `in_progress` before sending. Recovery is an explicit operation, not a
+startup action. It may mark a job `unknown_outcome` only after its lease has
+expired and the recorded owner process is confirmed absent on the same host;
+recovery claims are serialized in a SQLite write transaction. Live, unknown-
+host, or ownerless legacy work is left untouched. A stale attempt cannot
+complete after recovery or after a replacement attempt starts. Neither
+provider is assumed to support an idempotency token until its official API
+documents one.
 
 ## 6. Bounded scheduler, rate control, and retry policy
 
@@ -438,25 +453,27 @@ that the account's plan and billing settings determine actual cost.
    evidence utilities. The Phase 04 local-Qwen retirement moved
    `getNamingEvidence` into `backend/src/services/assessmentEvidence.ts`;
    keep this shared helper independent of provider-specific assessment code.
-3. **Storage migration:** Implement and test the single-ledger migration from
-   the JSON metrics file without resetting or deleting it. Verify the existing
-   usage API and imported counts.
+3. **Storage:** Prompt 09 implemented the SQLite batch/job ledger alongside the
+   existing JSON metrics file. No JSON import, migration, modification, or
+   deletion is part of the approved scope; the legacy usage API remains
+   unchanged.
 4. **Provider adapters:** Add mocked Groq and Cloudflare adapter tests for
    request shape, schema support gating, usage, finish reasons, errors,
    `Retry-After`, and secret-safe diagnostics. No live inference.
-5. **Scheduler and validation:** Implement durable idempotency, attempts,
-   bounded concurrency, partial failures, recovery/unknown outcomes, strict
-   validation, and accounting using mocked providers.
+5. **Scheduler and validation:** A future scheduler phase may add bounded
+   concurrency, partial failures, and provider integration. Prompt 09.1 adds
+   ownership-safe explicit recovery and trusted result validation, but neither
+   startup recovery nor scheduler integration is enabled.
 6. **Report integration:** Add AI aggregation and the fixing-prompt output
    separately from IBM. Run existing IBM tests unchanged.
 7. **Retire legacy AI:** Prompts 04–05 retired the local Qwen and selected
    Gemini/OpenRouter execution paths before replacement clients were ready.
    Contextual assessments are explicitly disabled during this transition;
-   IBM remains active. The old JSON usage ledger and read-only usage endpoint
-   are retained pending the approved ledger migration. Preserve shared
+   IBM remains active. The JSON usage ledger and read-only usage endpoint are
+   retained separately from the SQLite batch/job ledger. Preserve shared
    extraction/types and IBM code.
-8. **Rollback:** Keep each phase in a reversible change set and retain the old
-   usage JSON until migration is verified. A runtime rollback may disable AI
+8. **Rollback:** Keep each phase in a reversible change set and preserve the
+   existing usage JSON. A runtime rollback may disable AI
    while IBM continues; it must not silently fall back to a paid, unverified,
    or retired model.
 9. **Local verification:** Use mocked provider tests, persistence/restart/
@@ -475,25 +492,22 @@ available and unchanged.
 
 ## 11. Unresolved decisions requiring approval
 
-1. **Storage/deployment:** The recommended SQLite direction is approved.
-   Confirm whether the backend must support concurrent processes before
-   finalizing transaction and locking requirements.
-2. **Driver and packaging:** Which SQLite driver is acceptable for the
-   supported Node/Windows runtime? Verify native packaging/build behavior
-   before adding a dependency.
-3. **Retention:** Approve or replace the proposed 90-day raw prompt/context/
-   response retention, plus project-level deletion behavior.
-4. **Eligibility:** Confirm exact Groq no-purchase quotas and Cloudflare Workers
-   Free plan/account settings before enabling any model. Confirm how to handle
-   candidate models whose structured-output or output-limit requirements
-   remain undocumented.
-5. **Rule scope:** Review the three active rules against the 20 proposed rules
+1. **Provider eligibility:** Account evidence is operator-reported; runtime
+   compatibility and exact schema behavior remain unverified. Keep all models
+   blocked until the remaining evidence and implementation gates are satisfied.
+2. **Recovery operations:** Recovery remains an explicit operation and is not
+   called at startup. A future scheduler must coordinate lease renewal and
+   ensure it only requests recovery when appropriate.
+3. **Retention:** Terminal jobs, attempts, and results use seven-day retention.
+   Batches, snapshots, and projects are intentionally excluded from automatic
+   cleanup and are removed by explicit project deletion.
+4. **Rule scope:** Review the three active rules against the 20 proposed rules
    before expanding the registry. The 20-rule set is not complete active
    functionality today.
-6. **Migration order — resolved:** The human approved the prompt 04–05
+5. **Migration order — resolved:** The human approved the prompt 04–05
    sequence. Legacy AI is retired and contextual assessments remain disabled
    until direct provider clients are implemented; IBM remains active.
-7. **Confidence and UI:** Approve presenting model-reported confidence as
+6. **Confidence and UI:** Approve presenting model-reported confidence as
    uncalibrated metadata and showing disagreements as model-by-model evidence,
    not a majority-vote verdict.
 
@@ -502,9 +516,9 @@ available and unchanged.
 This document records the design-only state as of 2026-11-04; no application
 source, tests, manifests, provider settings, or `prompt.txt` were changed during
 that design pass. The human subsequently approved the architecture and
-recommended SQLite direction, and approved prompts 04–05 retired the local
-Qwen and legacy selected-model execution paths while preserving shared
-evidence extraction, IBM, and historical usage reporting. Provider eligibility,
-deployment locking details, and SQLite driver/Windows packaging remain
-implementation gates. No provider API call, live connection check, or inference
+approved prompts 04–05 retired the local Qwen and legacy selected-model
+execution paths while preserving shared evidence extraction, IBM, and
+historical usage reporting. Prompt 09 uses built-in SQLite and retains the
+separate JSON usage ledger. Provider eligibility and runtime verification
+remain incomplete. No provider API call, live connection check, or inference
 was performed.

@@ -42,13 +42,14 @@ No candidate is marked unavailable, and no replacement is proposed.
   `https://api.groq.com/openai/v1/chat/completions`; requests use the Groq API
   key as a bearer credential. The model pages show the exact IDs in direct
   Chat Completions examples.
-- **Structured output — Verified for GPT-OSS 120B and 20B; provisional for
+- **Structured output — Documented for GPT-OSS 120B/20B; provisional for
   Qwen 3.8 27B:** The Structured Outputs page's supported-model lists name all
-  three IDs for both strict and best-effort modes, as the operator observed.
-  However, its later “Choosing Between Strict and Best-effort Mode” table says
-  strict mode is limited to GPT-OSS 20B and 120B. The documentation remains
-  contradictory; Qwen strict support stays provisional pending runtime test
-  or clarification by Groq.
+  three IDs for both strict and best-effort modes. Its later “Choosing Between
+  Strict and Best-effort Mode” table says strict mode is limited to GPT-OSS
+  20B and 120B. The operator reports the conclusion that all three models
+  support both modes and provisionally accepts Qwen for implementation
+  testing. This project-level decision does not remove the public-doc conflict
+  or constitute runtime verification; Qwen strict support remains provisional.
   Strict mode uses
   `response_format: { type: "json_schema", json_schema: { name, strict: true,
   schema } }`. Strict schemas require every field in `required` and
@@ -94,7 +95,7 @@ application output cap is 2,048 tokens; it is not the model maximum.
 |---|---|---|---|---|---|---|
 | GPT-OSS-120B | `openai/gpt-oss-120b` | 131,072 / unconfirmed / 65,536 | $0.15 input; $0.60 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
 | GPT-OSS-20B | `openai/gpt-oss-20b` | 131,072 / unconfirmed / 65,536 | $0.075 input; $0.30 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
-| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Both listed; strict support conflict remains | **Partially verified** — runtime compatibility untested |
+| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Operator reports both modes supported; public strict-support conflict remains | **Partially verified** — runtime compatibility untested |
 
 Qwen's model page lists text and image input, with up to three input images.
 Images are not needed for the current text-evidence task.
@@ -271,8 +272,9 @@ remain untested at runtime. All Cloudflare models remain blocked.
 2. **Groq account billing is reported zero-cost eligible.** The operator
    confirmed Free plan, Allowed Models, organization limits, no payment method,
    no purchased credits, and no auto-recharge. The models remain blocked pending
-   implementation and runtime compatibility checks; Qwen strict support is
-   still provisional because of the provider-doc conflict.
+   implementation and runtime compatibility checks. The operator provisionally
+   accepts Qwen strict support for implementation testing, but the public-doc
+   conflict and runtime behavior remain unresolved.
 3. **Cloudflare account eligibility is verified at the account/billing level
    only** based on operator-reported dashboard facts and public pricing/model
    documentation. The catalog records `zero_cost_eligible` for the three exact
