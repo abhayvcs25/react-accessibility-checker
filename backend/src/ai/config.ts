@@ -16,7 +16,7 @@ export const AI_PROVIDERS = {
       scope: 'developer-plan-only-not-free-entitlement',
     },
     accountVerification: {
-      status: 'partially_verified',
+      status: 'verified',
       source: 'operator_reported_dashboard',
       plan: 'free',
       developerPlanActive: false,
@@ -25,11 +25,12 @@ export const AI_PROVIDERS = {
         'openai/gpt-oss-20b',
         'qwen/qwen3.8-27b',
       ],
-      paymentMethod: 'unverified',
-      purchasedCredits: 'unverified',
-      autoRecharge: 'unverified',
+      paymentMethod: false,
+      purchasedCredits: false,
+      autoRecharge: false,
       projectLimitsConfigured: false,
-      verificationDate: '2026-11-05',
+      developerUpgradesAvailable: false,
+      verificationDate: '2026-11-09',
     },
   },
   'cloudflare-workers-ai': {
@@ -47,6 +48,7 @@ export const AI_PROVIDERS = {
       freeAllocationResetsAtUtc: '00:00',
       paidOverageUsdPerThousandNeurons: 0.011,
       freeAllocationExhaustionBehavior: 'provider_rejects_requests',
+      applicationFreeAllocationGuard: 'not_implemented',
       scope: 'task-level-default-and-conditional-free-allocation',
     },
     accountVerification: {
@@ -58,7 +60,7 @@ export const AI_PROVIDERS = {
       aiGatewayConfigured: false,
       aiGatewayCreditsAdded: false,
       freeNeuronsConsumedAtVerification: 0,
-      verificationDate: '2026-11-05',
+      verificationDate: '2026-11-09',
     },
   },
 } as const;
@@ -101,7 +103,15 @@ export type StructuredOutputCapability =
   | 'unknown'
   | null;
 
-export type DocumentationStatus = 'documented' | 'unconfirmed';
+export type DocumentationStatus =
+  | 'documented'
+  | 'provisional'
+  | 'unconfirmed';
+
+export type OutputLimitEvidence =
+  | 'provider_documented'
+  | 'operator_reported_documentation'
+  | 'unconfirmed';
 
 export interface ModelPublishedPricing {
   inputUsdPerMillionTokens: number | null;
@@ -132,7 +142,7 @@ export interface ModelCandidate {
   providerId: AiProviderId;
   modelId: CandidateModelId;
   verificationStatus: VerificationStatus;
-  verificationDate: '2026-11-05';
+  verificationDate: '2026-11-09';
   accountVerificationStatus: VerificationStatus;
   runtimeVerificationStatus: VerificationStatus;
   accountEligibility: AccountEligibility;
@@ -141,6 +151,8 @@ export interface ModelCandidate {
   contextTokens: number;
   maxInputTokens: number | null;
   maxOutputTokens: number | null;
+  outputLimitEvidence: OutputLimitEvidence;
+  applicationMaxOutputTokens: number;
   publishedPricing: ModelPublishedPricing;
   documentedCapabilities: ModelCapabilityEvidence;
   requiredStructuredOutput: 'strict_json_schema';
@@ -192,11 +204,11 @@ const documentedCloudflareCapabilities: ModelCapabilityEvidence = {
     maxCompletionTokens: 'documented',
     responseFormat: 'documented',
   },
-  jsonMode: 'unconfirmed',
+  jsonMode: 'provisional',
   jsonSchemaParameter: 'documented',
-  jsonSchemaModelSupport: 'unconfirmed',
+  jsonSchemaModelSupport: 'provisional',
   strictJsonSchemaParameter: 'documented',
-  strictJsonSchemaModelSupport: 'unconfirmed',
+  strictJsonSchemaModelSupport: 'provisional',
   functionCalling: 'documented',
   reasoning: 'documented',
   vision: 'unconfirmed',
@@ -223,7 +235,7 @@ const documentedGroqStrictSchemaCapabilities: ModelCapabilityEvidence = {
 
 const unresolvedGroqQwenCapabilities: ModelCapabilityEvidence = {
   ...documentedGroqStrictSchemaCapabilities,
-  strictJsonSchemaModelSupport: 'unconfirmed',
+  strictJsonSchemaModelSupport: 'provisional',
 };
 
 export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
@@ -231,15 +243,17 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     providerId: 'groq',
     modelId: 'openai/gpt-oss-120b',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
-    accountVerificationStatus: 'partially_verified',
+    verificationDate: '2026-11-09',
+    accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
-    accountEligibility: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
     eligibility: 'blocked_unverified',
     operatorEnabled: false,
     contextTokens: 131_072,
     maxInputTokens: null,
     maxOutputTokens: 65_536,
+    outputLimitEvidence: 'provider_documented',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.15,
       outputUsdPerMillionTokens: 0.6,
@@ -249,22 +263,24 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'strict_json_schema',
     eligibilityReason:
-      'Groq billing-method, purchased-credit, and auto-recharge status remain unverified.',
+      'Groq account is reported zero-cost eligible; runtime compatibility remains unverified.',
     accountLimits: operatorReportedGroqLimits,
   },
   'openai/gpt-oss-20b': {
     providerId: 'groq',
     modelId: 'openai/gpt-oss-20b',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
-    accountVerificationStatus: 'partially_verified',
+    verificationDate: '2026-11-09',
+    accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
-    accountEligibility: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
     eligibility: 'blocked_unverified',
     operatorEnabled: false,
     contextTokens: 131_072,
     maxInputTokens: null,
     maxOutputTokens: 65_536,
+    outputLimitEvidence: 'provider_documented',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.075,
       outputUsdPerMillionTokens: 0.3,
@@ -274,22 +290,24 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'strict_json_schema',
     eligibilityReason:
-      'Groq billing-method, purchased-credit, and auto-recharge status remain unverified.',
+      'Groq account is reported zero-cost eligible; runtime compatibility remains unverified.',
     accountLimits: operatorReportedGroqLimits,
   },
   'qwen/qwen3.8-27b': {
     providerId: 'groq',
     modelId: 'qwen/qwen3.8-27b',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
-    accountVerificationStatus: 'partially_verified',
+    verificationDate: '2026-11-09',
+    accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
-    accountEligibility: 'unverified',
+    accountEligibility: 'zero_cost_eligible',
     eligibility: 'blocked_unverified',
     operatorEnabled: false,
     contextTokens: 131_072,
     maxInputTokens: null,
     maxOutputTokens: 16_384,
+    outputLimitEvidence: 'provider_documented',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.8,
       outputUsdPerMillionTokens: 4,
@@ -299,14 +317,14 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'unverified',
     eligibilityReason:
-      'Groq zero-cost account eligibility is unverified; strict JSON Schema support is contradictory in the current documentation.',
+      'Groq account is reported zero-cost eligible; strict JSON Schema support remains provisional because current documentation conflicts.',
     accountLimits: operatorReportedGroqLimits,
   },
   '@cf/zai-org/glm-4.7-flash': {
     providerId: 'cloudflare-workers-ai',
     modelId: '@cf/zai-org/glm-4.7-flash',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
+    verificationDate: '2026-11-09',
     accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
     accountEligibility: 'zero_cost_eligible',
@@ -314,7 +332,9 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     operatorEnabled: false,
     contextTokens: 131_072,
     maxInputTokens: null,
-    maxOutputTokens: null,
+    maxOutputTokens: 4_096,
+    outputLimitEvidence: 'operator_reported_documentation',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.0605,
       outputUsdPerMillionTokens: 0.4,
@@ -329,14 +349,14 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'unverified',
     eligibilityReason:
-      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+      'Account is reported zero-cost eligible within the shared free allocation; exact-model JSON Schema compatibility remains provisional pending runtime tests.',
     accountLimits: blockedCloudflareLimits,
   },
   '@cf/nvidia/nemotron-3-120b-a12b': {
     providerId: 'cloudflare-workers-ai',
     modelId: '@cf/nvidia/nemotron-3-120b-a12b',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
+    verificationDate: '2026-11-09',
     accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
     accountEligibility: 'zero_cost_eligible',
@@ -344,7 +364,9 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     operatorEnabled: false,
     contextTokens: 256_000,
     maxInputTokens: null,
-    maxOutputTokens: null,
+    maxOutputTokens: 16_384,
+    outputLimitEvidence: 'operator_reported_documentation',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.5,
       outputUsdPerMillionTokens: 1.5,
@@ -359,14 +381,14 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'unverified',
     eligibilityReason:
-      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+      'Account is reported zero-cost eligible within the shared free allocation; exact-model JSON Schema compatibility remains provisional pending runtime tests.',
     accountLimits: blockedCloudflareLimits,
   },
   '@cf/google/gemma-4-26b-a4b-it': {
     providerId: 'cloudflare-workers-ai',
     modelId: '@cf/google/gemma-4-26b-a4b-it',
     verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-05',
+    verificationDate: '2026-11-09',
     accountVerificationStatus: 'verified',
     runtimeVerificationStatus: 'unverified',
     accountEligibility: 'zero_cost_eligible',
@@ -374,7 +396,9 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     operatorEnabled: false,
     contextTokens: 256_000,
     maxInputTokens: null,
-    maxOutputTokens: null,
+    maxOutputTokens: 8_192,
+    outputLimitEvidence: 'operator_reported_documentation',
+    applicationMaxOutputTokens: 2_048,
     publishedPricing: {
       inputUsdPerMillionTokens: 0.1,
       outputUsdPerMillionTokens: 0.3,
@@ -389,7 +413,7 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'unverified',
     eligibilityReason:
-      'Account is reported zero-cost eligible within the shared free allocation; output limit and exact-model JSON support remain unconfirmed.',
+      'Account is reported zero-cost eligible within the shared free allocation; exact-model JSON Schema compatibility remains provisional pending runtime tests.',
     accountLimits: blockedCloudflareLimits,
   },
 };
@@ -401,7 +425,10 @@ export type EligibleModelCandidate = Omit<
   | 'operatorEnabled'
   | 'verificationStatus'
   | 'accountVerificationStatus'
+  | 'runtimeVerificationStatus'
   | 'accountEligibility'
+  | 'outputLimitEvidence'
+  | 'applicationMaxOutputTokens'
   | 'maxOutputTokens'
   | 'structuredOutput'
 > & {
@@ -410,7 +437,10 @@ export type EligibleModelCandidate = Omit<
   operatorEnabled: true;
   verificationStatus: 'verified';
   accountVerificationStatus: 'verified';
+  runtimeVerificationStatus: 'verified';
   accountEligibility: 'zero_cost_eligible';
+  applicationMaxOutputTokens: number;
+  outputLimitEvidence: Exclude<OutputLimitEvidence, 'unconfirmed'>;
   maxOutputTokens: number;
   requiredStructuredOutput: 'strict_json_schema';
   structuredOutput: 'strict_json_schema';
@@ -465,6 +495,14 @@ export function isCandidateEligible(
     typeof candidate.contextTokens !== 'number' ||
     !Number.isFinite(candidate.contextTokens) ||
     candidate.contextTokens <= 0 ||
+    !isRecord(candidate.documentedCapabilities) ||
+    !isRecord(candidate.documentedCapabilities.apiParameters) ||
+    candidate.documentedCapabilities.strictJsonSchemaParameter !==
+      'documented' ||
+    candidate.documentedCapabilities.strictJsonSchemaModelSupport !==
+      'documented' ||
+    candidate.documentedCapabilities.apiParameters.responseFormat !==
+      'documented' ||
     typeof candidate.eligibilityReason !== 'string' ||
     candidate.eligibilityReason.length === 0
   ) {
@@ -474,12 +512,19 @@ export function isCandidateEligible(
   if (
     candidate.verificationStatus !== 'verified' ||
     candidate.accountVerificationStatus !== 'verified' ||
+    candidate.runtimeVerificationStatus !== 'verified' ||
     candidate.accountEligibility !== 'zero_cost_eligible' ||
     candidate.eligibility !== 'eligible' ||
     candidate.operatorEnabled !== true ||
     typeof candidate.maxOutputTokens !== 'number' ||
     !Number.isFinite(candidate.maxOutputTokens) ||
     candidate.maxOutputTokens <= 0 ||
+    (candidate.outputLimitEvidence !== 'provider_documented' &&
+      candidate.outputLimitEvidence !== 'operator_reported_documentation') ||
+    typeof candidate.applicationMaxOutputTokens !== 'number' ||
+    !Number.isFinite(candidate.applicationMaxOutputTokens) ||
+    candidate.applicationMaxOutputTokens <= 0 ||
+    candidate.applicationMaxOutputTokens > candidate.maxOutputTokens ||
     candidate.requiredStructuredOutput !== 'strict_json_schema' ||
     candidate.structuredOutput !== candidate.requiredStructuredOutput
   ) {
@@ -509,7 +554,9 @@ function asEligibleCandidate(
     operatorEnabled: true,
     contextTokens: candidate.contextTokens,
     maxInputTokens: candidate.maxInputTokens,
+    applicationMaxOutputTokens: candidate.applicationMaxOutputTokens,
     maxOutputTokens: candidate.maxOutputTokens,
+    outputLimitEvidence: candidate.outputLimitEvidence,
     publishedPricing: candidate.publishedPricing,
     documentedCapabilities: candidate.documentedCapabilities,
     requiredStructuredOutput: candidate.requiredStructuredOutput,

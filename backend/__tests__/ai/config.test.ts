@@ -32,6 +32,7 @@ function makeVerifiedCandidate(
     ...MODEL_CANDIDATES['openai/gpt-oss-20b'],
     verificationStatus: 'verified',
     accountVerificationStatus: 'verified',
+    runtimeVerificationStatus: 'verified',
     accountEligibility: 'zero_cost_eligible',
     eligibility: 'eligible',
     operatorEnabled: true,
@@ -56,13 +57,16 @@ describe('shared model catalog', () => {
 
   it('records distinct documentation and account verification dimensions', () => {
     expect(AI_PROVIDERS.groq.accountVerification).toMatchObject({
-      status: 'partially_verified',
+      status: 'verified',
       source: 'operator_reported_dashboard',
       plan: 'free',
       developerPlanActive: false,
-      paymentMethod: 'unverified',
-      purchasedCredits: 'unverified',
-      autoRecharge: 'unverified',
+      paymentMethod: false,
+      purchasedCredits: false,
+      autoRecharge: false,
+      projectLimitsConfigured: false,
+      developerUpgradesAvailable: false,
+      verificationDate: '2026-11-09',
     });
     expect(AI_PROVIDERS['cloudflare-workers-ai']).toMatchObject({
       accountVerification: {
@@ -74,12 +78,14 @@ describe('shared model catalog', () => {
         aiGatewayConfigured: false,
         aiGatewayCreditsAdded: false,
         freeNeuronsConsumedAtVerification: 0,
+        verificationDate: '2026-11-09',
       },
       publishedLimits: {
         sharedFreeNeuronsPerDay: 10_000,
         freeAllocationResetsAtUtc: '00:00',
         paidOverageUsdPerThousandNeurons: 0.011,
         freeAllocationExhaustionBehavior: 'provider_rejects_requests',
+        applicationFreeAllocationGuard: 'not_implemented',
       },
     });
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
@@ -94,23 +100,30 @@ describe('shared model catalog', () => {
     expect(MODEL_CANDIDATES['openai/gpt-oss-120b']).toMatchObject({
       contextTokens: 131_072,
       maxOutputTokens: 65_536,
+      outputLimitEvidence: 'provider_documented',
+      applicationMaxOutputTokens: 2_048,
       structuredOutput: 'strict_json_schema',
     });
     expect(MODEL_CANDIDATES['openai/gpt-oss-20b']).toMatchObject({
       contextTokens: 131_072,
       maxOutputTokens: 65_536,
+      applicationMaxOutputTokens: 2_048,
       structuredOutput: 'strict_json_schema',
     });
     expect(MODEL_CANDIDATES['qwen/qwen3.8-27b']).toMatchObject({
       contextTokens: 131_072,
       maxOutputTokens: 16_384,
+      outputLimitEvidence: 'provider_documented',
+      applicationMaxOutputTokens: 2_048,
       requiredStructuredOutput: 'strict_json_schema',
       structuredOutput: 'unverified',
     });
     expect(MODEL_CANDIDATES['@cf/zai-org/glm-4.7-flash']).toMatchObject({
       contextTokens: 131_072,
       maxInputTokens: null,
-      maxOutputTokens: null,
+      maxOutputTokens: 4_096,
+      outputLimitEvidence: 'operator_reported_documentation',
+      applicationMaxOutputTokens: 2_048,
       accountVerificationStatus: 'verified',
       accountEligibility: 'zero_cost_eligible',
       publishedPricing: {
@@ -125,11 +138,11 @@ describe('shared model catalog', () => {
           maxCompletionTokens: 'documented',
           responseFormat: 'documented',
         },
-        jsonMode: 'unconfirmed',
+        jsonMode: 'provisional',
         jsonSchemaParameter: 'documented',
-        jsonSchemaModelSupport: 'unconfirmed',
+        jsonSchemaModelSupport: 'provisional',
         strictJsonSchemaParameter: 'documented',
-        strictJsonSchemaModelSupport: 'unconfirmed',
+        strictJsonSchemaModelSupport: 'provisional',
         functionCalling: 'documented',
         reasoning: 'documented',
         zeroDataRetention: 'documented',
@@ -141,7 +154,9 @@ describe('shared model catalog', () => {
     ).toMatchObject({
       contextTokens: 256_000,
       maxInputTokens: null,
-      maxOutputTokens: null,
+      maxOutputTokens: 16_384,
+      outputLimitEvidence: 'operator_reported_documentation',
+      applicationMaxOutputTokens: 2_048,
       accountVerificationStatus: 'verified',
       accountEligibility: 'zero_cost_eligible',
       publishedPricing: {
@@ -161,7 +176,9 @@ describe('shared model catalog', () => {
     ).toMatchObject({
       contextTokens: 256_000,
       maxInputTokens: null,
-      maxOutputTokens: null,
+      maxOutputTokens: 8_192,
+      outputLimitEvidence: 'operator_reported_documentation',
+      applicationMaxOutputTokens: 2_048,
       accountVerificationStatus: 'verified',
       accountEligibility: 'zero_cost_eligible',
       publishedPricing: {
@@ -183,7 +200,7 @@ describe('shared model catalog', () => {
       expect(MODEL_CANDIDATES[modelId]).toMatchObject({
         eligibility: 'blocked_unverified',
         verificationStatus: 'partially_verified',
-        verificationDate: '2026-11-05',
+        verificationDate: '2026-11-09',
       });
       expect(MODEL_CANDIDATES[modelId].runtimeVerificationStatus).toBe(
         'unverified',
@@ -195,7 +212,12 @@ describe('shared model catalog', () => {
       expect(isModelEligible(modelId)).toBe(false);
     }
     for (const modelId of expectedGroqModels) {
-      expect(MODEL_CANDIDATES[modelId].accountEligibility).toBe('unverified');
+      expect(MODEL_CANDIDATES[modelId].accountEligibility).toBe(
+        'zero_cost_eligible',
+      );
+      expect(MODEL_CANDIDATES[modelId].accountVerificationStatus).toBe(
+        'verified',
+      );
       expect(MODEL_CANDIDATES[modelId].accountLimits).toEqual({
         requestsPerMinute: 30,
         requestsPerDay: 1_000,
@@ -207,6 +229,9 @@ describe('shared model catalog', () => {
       expect(MODEL_CANDIDATES[modelId].accountEligibility).toBe(
         'zero_cost_eligible',
       );
+    }
+    for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
+      expect(MODEL_CANDIDATES[modelId].applicationMaxOutputTokens).toBe(2_048);
     }
     expect(getEligibleModels()).toEqual([]);
     expect(() => requireEligibleModel('openai/gpt-oss-120b')).toThrow(
@@ -230,6 +255,11 @@ describe('shared model catalog', () => {
       ...missingVerificationStatus
     } = makeVerifiedCandidate();
     expect(isCandidateEligible(missingVerificationStatus)).toBe(false);
+    expect(
+      isCandidateEligible(
+        makeVerifiedCandidate({ runtimeVerificationStatus: 'unverified' }),
+      ),
+    ).toBe(false);
   });
 
   it('requires explicit zero-cost account eligibility', () => {
@@ -293,6 +323,16 @@ describe('shared model catalog', () => {
       ...missingRequiredOutput
     } = makeVerifiedCandidate();
     expect(isCandidateEligible(missingRequiredOutput)).toBe(false);
+    expect(
+      isCandidateEligible(
+        makeVerifiedCandidate({
+          documentedCapabilities: {
+            ...MODEL_CANDIDATES['openai/gpt-oss-20b'].documentedCapabilities,
+            strictJsonSchemaModelSupport: 'provisional',
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it('rejects candidates with missing identity or verification metadata', () => {
@@ -356,17 +396,17 @@ describe('shared model catalog', () => {
         maxCompletionTokens: 'documented',
         responseFormat: 'documented',
       },
-      jsonMode: 'unconfirmed',
+      jsonMode: 'provisional',
       jsonSchemaParameter: 'documented',
-      jsonSchemaModelSupport: 'unconfirmed',
+      jsonSchemaModelSupport: 'provisional',
       strictJsonSchemaParameter: 'documented',
-      strictJsonSchemaModelSupport: 'unconfirmed',
+      strictJsonSchemaModelSupport: 'provisional',
     });
     expect(
       MODEL_CANDIDATES['qwen/qwen3.8-27b'].documentedCapabilities,
     ).toMatchObject({
       jsonSchemaModelSupport: 'documented',
-      strictJsonSchemaModelSupport: 'unconfirmed',
+      strictJsonSchemaModelSupport: 'provisional',
     });
     expect(AI_APPLICATION_LIMITS).toEqual({
       maxConcurrentPerModel: 1,

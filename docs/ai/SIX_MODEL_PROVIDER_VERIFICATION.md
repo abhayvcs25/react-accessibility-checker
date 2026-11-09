@@ -1,11 +1,11 @@
 # Six-Model Provider Verification
 
-**Review date:** 2026-11-05
+**Review date:** 2026-11-09
 **Evidence source:** Official Groq and Cloudflare documentation, plus
-operator-reported dashboard findings dated 2026-11-05.
+operator-reported dashboard and documentation findings dated 2026-11-09.
 **Scope:** Account evidence below was reported by the operator and was not
-independently accessed. No API calls, live inference, billing setup, or
-quota-consuming tests were performed.
+independently accessed. Provider documentation was directly checked. No API
+calls, live inference, billing setup, or quota-consuming tests were performed.
 
 ## Verification dimensions
 
@@ -42,12 +42,13 @@ No candidate is marked unavailable, and no replacement is proposed.
   `https://api.groq.com/openai/v1/chat/completions`; requests use the Groq API
   key as a bearer credential. The model pages show the exact IDs in direct
   Chat Completions examples.
-- **Structured output — Verified for GPT-OSS 120B and 20B; unresolved for
-  Qwen 3.8 27B:** The Structured Outputs page lists all three IDs under
-  `strict: true`, but its later “Choosing Between Strict and Best-effort Mode”
-  table says strict mode is limited to GPT-OSS 20B and 120B. The page does not
-  reconcile these statements. Keep Qwen strict-schema support unverified until
-  Groq clarifies the conflict. All three are listed for best-effort mode.
+- **Structured output — Verified for GPT-OSS 120B and 20B; provisional for
+  Qwen 3.8 27B:** The Structured Outputs page's supported-model lists name all
+  three IDs for both strict and best-effort modes, as the operator observed.
+  However, its later “Choosing Between Strict and Best-effort Mode” table says
+  strict mode is limited to GPT-OSS 20B and 120B. The documentation remains
+  contradictory; Qwen strict support stays provisional pending runtime test
+  or clarification by Groq.
   Strict mode uses
   `response_format: { type: "json_schema", json_schema: { name, strict: true,
   schema } }`. Strict schemas require every field in `required` and
@@ -73,29 +74,27 @@ No candidate is marked unavailable, and no replacement is proposed.
   metadata is retained. Zero Data Retention is an account-level setting and
   has feature implications. Review the current data controls and applicable
   service agreement before sending project content.
-- **Operator-reported account check — Partially verified:** The Groq Console
+- **Operator-reported account check — Verified as reported:** The Groq Console
   showed the Free ($0) plan, Developer plan inactive, and all three exact model
-  IDs in Allowed Models. The organization limits shown for each were 30 RPM,
-  1,000 RPD, 8,000 TPM, and 200,000 TPD. The project-limits toggle was
-  disabled, so these are the organization limits reported by the operator.
-  Developer upgrades were temporarily unavailable.
-- **Remaining Groq billing uncertainty — Not verified:** No payment-method,
-  purchased-credit, or auto-recharge section was visible in the reviewed
-  dashboard. These states must not be inferred from that absence. Therefore
-  zero-cost eligibility remains conditional and all three account eligibility
-  values remain `unverified`; no candidate is marked eligible.
+  IDs in Allowed Models. The operator confirms no payment method, purchased
+  credits, or auto-recharge; project limits are disabled, and the organization
+  limits for each model are 30 RPM, 1,000 RPD, 8,000 TPM, and 200,000 TPD.
+  Developer upgrades were temporarily unavailable. The account is recorded as
+  zero-cost eligible based on the operator's dashboard review, not runtime
+  verification.
 
 ### Candidate evidence
 
 The operator reports all three exact IDs are allowed on the Free organization
 and each currently shows the same organization limits. These dashboard values
-are recorded separately from the Developer-plan public defaults.
+are recorded separately from the Developer-plan public defaults. The selected
+application output cap is 2,048 tokens; it is not the model maximum.
 
-| Candidate | Official API model ID | Context / max input / max output | Published price per 1M tokens | Account-reported limits RPM / RPD / TPM / TPD | JSON Schema | Status |
+| Candidate | Official API model ID | Context / max input / max output | Published price per 1M tokens | App output cap | Account-reported limits RPM / RPD / TPM / TPD | JSON Schema | Status |
 |---|---|---|---|---|---|---|
-| GPT-OSS-120B | `openai/gpt-oss-120b` | 131,072 / unconfirmed / 65,536 | $0.15 input; $0.60 output | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — billing/credit state remains unverified |
-| GPT-OSS-20B | `openai/gpt-oss-20b` | 131,072 / unconfirmed / 65,536 | $0.075 input; $0.30 output | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — billing/credit state remains unverified |
-| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 30 / 1,000 / 8,000 / 200,000 | Best-effort listed; strict support contradicted on the same docs page | **Partially verified** — billing/credit state and strict support unresolved |
+| GPT-OSS-120B | `openai/gpt-oss-120b` | 131,072 / unconfirmed / 65,536 | $0.15 input; $0.60 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
+| GPT-OSS-20B | `openai/gpt-oss-20b` | 131,072 / unconfirmed / 65,536 | $0.075 input; $0.30 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
+| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Both listed; strict support conflict remains | **Partially verified** — runtime compatibility untested |
 
 Qwen's model page lists text and image input, with up to three input images.
 Images are not needed for the current text-evidence task.
@@ -138,15 +137,16 @@ assess legal compatibility.
   reasons include `stop`, `length`, `tool_calls`, `content_filter`, and
   `function_call`. Treat `length` and other non-normal completion reasons as
   incomplete/non-successful assessments.
-- **JSON/JSON Schema — Parameter documented; exact-model support unconfirmed:**
+- **JSON/JSON Schema — Parameter documented; exact-model support provisional:**
   Each exact model's synchronous input schema documents `response_format`
   choices including `json_object` and `json_schema`, and a `strict` boolean
   field under `json_schema`. `max_tokens` and `max_completion_tokens` are also
-  documented request parameters. However, the JSON Mode supported-model list
-  omits all three candidates and Cloudflare warns it cannot guarantee schema
-  adherence in every case. Thus API parameter/schema shape is documented, but
-  model-level JSON Mode, JSON Schema and strict-schema support remain
-  `unconfirmed`. The parameter schema is not a runtime guarantee.
+  documented request parameters. The operator proposes provisionally treating
+  model JSON/JSON Schema support as available for implementation testing.
+  However, the JSON Mode supported-model list omits all three candidates and
+  Cloudflare warns it cannot guarantee schema adherence in every case.
+  Therefore exact-model JSON/JSON Schema and strict-schema support remain
+  provisional and require testing against the application's actual schema.
 - **Free allocation — Documentation and account evidence verified:** The
   operator reports a Workers Free ($0) account, Workers Paid inactive, no
   payment method, no custom AI Gateway, no AI Gateway credits, and 0 Neurons
@@ -190,18 +190,20 @@ assess legal compatibility.
 
 ### Candidate evidence
 
-| Model | Exact model ID | Context window | Max input tokens | Max output tokens | Published price per 1M input / output tokens | Neurons per 1M input / output tokens | Account status |
-|---|---|---:|---:|---:|---:|---:|---|
-| GLM-4.7-Flash | `@cf/zai-org/glm-4.7-flash` | 131,072 | Unconfirmed | Unconfirmed | $0.0605 model page; $0.060 pricing table / $0.40 | 5,500 / 36,400 | Account-reported zero-cost eligible within shared Free allocation |
-| NVIDIA Nemotron 3 120B | `@cf/nvidia/nemotron-3-120b-a12b` | 256,000 | Unconfirmed | Unconfirmed | $0.50 / $1.50 | 45,455 / 136,364 | Account-reported zero-cost eligible within shared Free allocation |
-| Gemma 4 26B A4B | `@cf/google/gemma-4-26b-a4b-it` | 256,000 | Unconfirmed | Unconfirmed | $0.10 / $0.30 | 9,091 / 27,273 | Account-reported zero-cost eligible within shared Free allocation |
+| Model | Exact model ID | Context window | Max input tokens | Max output tokens | Application output cap | Published price per 1M input / output tokens | Neurons per 1M input / output tokens | Account status |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| GLM-4.7-Flash | `@cf/zai-org/glm-4.7-flash` | 131,072 | Unconfirmed | 4,096 (operator-reported documentation) | 2,048 | $0.0605 model page; $0.060 pricing table / $0.40 | 5,500 / 36,400 | Account-reported zero-cost eligible within shared Free allocation |
+| NVIDIA Nemotron 3 120B | `@cf/nvidia/nemotron-3-120b-a12b` | 256,000 | Unconfirmed | 16,384 (operator-reported documentation) | 2,048 | $0.50 / $1.50 | 45,455 / 136,364 | Account-reported zero-cost eligible within shared Free allocation |
+| Gemma 4 26B A4B | `@cf/google/gemma-4-26b-a4b-it` | 256,000 | Unconfirmed | 8,192 (operator-reported documentation) | 2,048 | $0.10 / $0.30 | 9,091 / 27,273 | Account-reported zero-cost eligible within shared Free allocation |
 
 For each exact model schema, `max_tokens` and
 `max_completion_tokens` exist as nullable integer request parameters. This
-documents how to request a limit; it does not publish the model's numeric
-maximum. Context-window size, maximum input tokens, and maximum output tokens
-are therefore tracked separately. No numeric maximum input or output token
-limit is published in the reviewed exact-model documentation.
+documents how to request a limit. The numeric output maxima above come from
+the operator's manual documentation review and have not been independently
+verified against a provider source by this review. Context-window size,
+maximum input tokens, and maximum output tokens are tracked separately.
+Maximum input remains unconfirmed. The planned 2,048-token application cap is
+an application setting, not a provider-imposed model maximum.
 
 The GLM model page lists input pricing as $0.0605 per million tokens, while
 the current Workers AI pricing table displays $0.060; both list $0.40 output
@@ -212,8 +214,9 @@ silently treating the rounded values as identical.
 The per-model request schemas document `response_format`, including a
 `json_schema` object and nullable `strict` field. Separately, the provider JSON
 Mode page omits all three exact models from its supported-model list. Catalog
-metadata therefore records the parameter schemas as `documented`, while JSON
-Mode and model-level JSON Schema/strict behavior remain `unconfirmed`.
+metadata therefore records parameter schemas as `documented`, while
+model-level JSON Mode, JSON Schema, and strict behavior remain `provisional`
+until tested with the actual assessment schema.
 
 The exact model pages document these additional capabilities:
 
@@ -245,39 +248,45 @@ The exact model pages document these additional capabilities:
 
 The Cloudflare JSON Mode page's current supported-model list does not include
 GLM-4.7-Flash, Nemotron 3 120B, or Gemma 4 26B A4B IT. Their request schemas
-accepting generic `response_format`/`json_schema` parameters does not establish
-support for those exact models. Their structured-output capabilities therefore
-remain unverified.
+accepting generic `response_format`/`json_schema` parameters do not establish
+support for those exact models. The operator proposes testing that support
+provisionally during implementation; no such tests or live requests have yet
+been performed.
 
 ## Integration decision
 
-1. **Do not implement any provider client yet.** No candidate is fully verified
-   and no live behavior has been tested.
-2. **Groq candidates remain blocked.** The operator confirmed Free plan,
-   Allowed Models and organization limits, but could not verify payment method,
-   purchased credits, or auto-recharge. Qwen's strict-schema documentation is
-   also contradictory.
+1. **Provider client implementation can proceed behind the existing blocked
+   eligibility gate.** Do not enable a candidate or send live requests until
+   the adapter is covered with local tests and the account owner authorizes
+   controlled runtime schema checks under the ₹0 account constraints.
+2. **Groq account billing is reported zero-cost eligible.** The operator
+   confirmed Free plan, Allowed Models, organization limits, no payment method,
+   no purchased credits, and no auto-recharge. The models remain blocked pending
+   implementation and runtime compatibility checks; Qwen strict support is
+   still provisional because of the provider-doc conflict.
 3. **Cloudflare account eligibility is verified at the account/billing level
    only** based on operator-reported dashboard facts and public pricing/model
    documentation. The catalog records `zero_cost_eligible` for the three exact
    models while retaining overall `partially_verified`, `blocked_unverified`,
    and operator-disabled states. The shared free allowance is limited and
    resets daily; future clients need an explicit fail-closed quota stop.
-   Cloudflare candidates remain partially verified because numeric model
-   input/output limits and exact-model JSON/JSON Schema support are unresolved.
-4. **No replacements are recommended.** If the Groq no-purchase condition or
-   strict structured-output requirements cannot be met, stop and request human
-   approval of any revised shortlist. Do not silently substitute models,
-   providers, routes, or paid options.
+   Cloudflare candidates remain partially verified because maximum input
+   tokens are unknown and exact-model JSON/JSON Schema compatibility has not
+   been runtime tested. Output maxima are recorded as operator-reported docs
+   findings; the project intends to cap each request at 2,048 output tokens.
+4. **No replacements are recommended.** If strict structured-output
+   compatibility cannot be established, stop and request human approval of
+   any revised shortlist. Do not silently substitute models, providers,
+   routes, or paid options.
 5. **No live behavior is verified.** Public documentation review does not
    establish successful authentication, account entitlement, model response
    quality, or runtime compatibility.
 
 ## Retrieval and verification notes
 
-- Public documentation and operator-reported account facts were reviewed on
-  2026-11-05. Provider catalogues, pricing, limits, account status, and terms
-  can change; recheck first-party sources and account dashboards before
-  implementation or live testing.
+- Public documentation and operator-reported account and model-limit facts
+  were reviewed on 2026-11-09. Provider catalogues, pricing, limits, account
+  status, and terms can change; recheck first-party sources and account
+  dashboards before implementation or live testing.
 - No live API or inference test was performed, and the assessment pipeline was
   not changed.
