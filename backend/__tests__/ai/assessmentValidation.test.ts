@@ -21,7 +21,7 @@ function assessment(overrides: Record<string, unknown> = {}) {
     targetId: 'target-1',
     ruleId: 'color-contrast',
     status: 'potential_issue',
-    explanation: 'A visible text/background contrast issue was detected.',
+    explanation: 'Violation: A visible text/background contrast issue was detected.',
     evidenceRefs: ['evidence-1'],
     confidence: 0.8,
     providerId: 'groq',
@@ -53,7 +53,7 @@ describe('shared assessment normalization and validation', () => {
     expect(validateAssessment(valid, context)).toEqual({
       confidence: 0.8,
       evidenceRefs: ['evidence-1'],
-      explanation: 'A visible text/background contrast issue was detected.',
+      explanation: 'Violation: A visible text/background contrast issue was detected.',
       modelId: 'openai/gpt-oss-20b',
       providerId: 'groq',
       ruleId: 'color-contrast',
@@ -116,6 +116,7 @@ describe('shared assessment normalization and validation', () => {
       validateAssessment(
         assessment({
           status: 'insufficient_context',
+          explanation: 'Insufficient context: the available evidence is incomplete.',
           evidenceRefs: [],
         }),
         context,
@@ -124,5 +125,50 @@ describe('shared assessment normalization and validation', () => {
       status: 'insufficient_context',
       evidenceRefs: [],
     });
+  });
+
+  it('requires the explanation to lead with the matching decision', () => {
+    expectFailure(
+      () =>
+        validateAssessment(
+          assessment({ explanation: 'The label may not explain the action.' }),
+          context,
+        ),
+      'semantic_invalid',
+    );
+    expectFailure(
+      () =>
+        validateAssessment(
+          assessment({
+            status: 'no_issue_detected',
+            explanation: 'Violation: the available evidence supports a clear label.',
+          }),
+          context,
+        ),
+      'semantic_invalid',
+    );
+  });
+
+  it('accepts a correctly prefixed no-violation decision', () => {
+    expect(
+      validateAssessment(
+        assessment({
+          status: 'no_issue_detected',
+          explanation: 'Not violation: the supplied label clearly identifies the action.',
+        }),
+        context,
+      ),
+    ).toMatchObject({ status: 'no_issue_detected' });
+  });
+
+  it('rejects duplicate evidence references', () => {
+    expectFailure(
+      () =>
+        validateAssessment(
+          assessment({ evidenceRefs: ['evidence-1', 'evidence-1'] }),
+          context,
+        ),
+      'semantic_invalid',
+    );
   });
 });

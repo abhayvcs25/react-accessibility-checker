@@ -232,7 +232,7 @@ describe('mocked file-to-report acceptance', () => {
     ]);
   }
 
-  it('keeps all six candidates blocked in an IBM-only upload', async () => {
+  it('keeps an IBM-only upload idle when eligible models have no assessments', async () => {
     const report = await acceptedReport([]);
     expectIbmUnchanged(report);
     expect(report.advisoryReport.status).toBe('not_run');
@@ -240,8 +240,8 @@ describe('mocked file-to-report acceptance', () => {
     expect(
       report.advisoryReport.models.every(
         (model) =>
-          model.status === 'blocked' &&
-          model.eligibility === 'blocked_unverified' &&
+          model.status === 'not_run' &&
+          model.eligibility === 'eligible' &&
           model.validatedCount === 0,
       ),
     ).toBe(true);
@@ -256,7 +256,7 @@ describe('mocked file-to-report acceptance', () => {
     );
   });
 
-  it('renders isolated mock outcomes while production eligibility stays blocked', async () => {
+  it('renders isolated mock outcomes with eligible models still partially verified', async () => {
     const report = await acceptedReport(
       candidateModels.map((_model, index) => outcome(index)),
     );
@@ -269,7 +269,7 @@ describe('mocked file-to-report acceptance', () => {
           expect.objectContaining({
             modelId,
             status: 'completed',
-            eligibility: 'blocked_unverified',
+            eligibility: 'eligible',
             validatedCount: 1,
           }),
         ),

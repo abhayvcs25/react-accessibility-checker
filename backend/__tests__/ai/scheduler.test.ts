@@ -138,7 +138,7 @@ function createCompletion(request: ProviderRequest): ProviderCompletion {
       targetId: input.targetId,
       ruleId: input.ruleId,
       status: 'potential_issue',
-      explanation: 'A mock accessibility observation.',
+      explanation: 'Violation: A mock accessibility observation.',
       evidenceRefs: ['evidence-1'],
       confidence: 0.8,
       providerId: input.providerId,
@@ -172,6 +172,10 @@ function scheduler(
 beforeEach(() => {
   temporaryDirectory = mkdtempSync(join(tmpdir(), 'rac-ai-scheduler-'));
   ledger = new BatchLedger({ filePath: join(temporaryDirectory, 'ledger.sqlite') });
+  for (const candidate of Object.values(MODEL_CANDIDATES)) {
+    candidate.eligibility = 'disabled_by_operator';
+    candidate.operatorEnabled = false;
+  }
 });
 
 afterEach(() => {
@@ -183,32 +187,47 @@ afterEach(() => {
 });
 
 describe('bounded AI assessment scheduler', () => {
-  it('keeps all currently blocked models fail-closed and makes no provider calls', async () => {
+  it('dispatches every operator-enabled evaluation model and reports partial verification', async () => {
+    for (const candidate of Object.values(MODEL_CANDIDATES)) {
+      candidate.eligibility = 'eligible';
+      candidate.operatorEnabled = true;
+    }
     const groq = adapter('groq');
     const cloudflare = adapter('cloudflare-workers-ai');
-    const prepare = vi.fn(() => {
-      throw new Error('Blocked models must not be prepared.');
-    });
 
     const result = await scheduler({
       groq,
       'cloudflare-workers-ai': cloudflare,
-    }).run([
+    }, { cloudflareMinRequestIntervalMs: 0 }).run([{
+      batch: batchInput('evaluation-project'),
+      assessments: [makeAssessment('evaluation-component')],
+    }]);
+
+    expect(result.blockedModels).toHaveLength(0);
+    expect(result.jobs).toHaveLength(6);
+    expect(result.batches[0]?.plannedJobCount).toBe(6);
+    expect(groq.complete).toHaveBeenCalledTimes(3);
+    expect(cloudflare.complete).toHaveBeenCalledTimes(3);
+    expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
+  });
+
+  it('restricts a component assessment to its assigned model', async () => {
+    const modelId = 'openai/gpt-oss-20b';
+    enableModel(modelId);
+    const groq = adapter('groq');
+    const result = await scheduler({ groq }).run([
       {
-        batch: batchInput('blocked-project'),
-        assessments: [{ prepare }],
+        batch: batchInput('assigned-component-project'),
+        assessments: [{ ...makeAssessment('component-one'), modelId }],
       },
     ]);
 
-    expect(result.blockedModels).toHaveLength(6);
-    expect(result.jobs).toHaveLength(0);
-    expect(result.batches[0]?.plannedJobCount).toBe(0);
-    expect(prepare).not.toHaveBeenCalled();
-    expect(groq.complete).not.toHaveBeenCalled();
-    expect(cloudflare.complete).not.toHaveBeenCalled();
+    expect(result.jobs).toHaveLength(1);
+    expect(result.jobs[0]?.modelId).toBe(modelId);
+    expect(groq.complete).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds total/provider/model concurrency and fairly interleaves batches', async () => {
+  it('keeps total/provider/model concurrency serial while fairly interleaving batches', async () => {
     const modelIds: CandidateModelId[] = [
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
@@ -260,7 +279,10 @@ describe('bounded AI assessment scheduler', () => {
     );
     const result = await scheduler(
       { groq, 'cloudflare-workers-ai': cloudflare },
-      { limits: { maxConcurrentPerModel: 1 } },
+      {
+        limits: { maxConcurrentPerModel: 1 },
+        cloudflareMinRequestIntervalMs: 0,
+      },
     ).run(
       Array.from({ length: 6 }, (_, index) => {
         const batchNumber = index + 1;
@@ -271,9 +293,9 @@ describe('bounded AI assessment scheduler', () => {
       }),
     );
 
-    expect(maximumTotal).toBe(6);
-    expect(maximumProviders.get('groq')).toBe(3);
-    expect(maximumProviders.get('cloudflare-workers-ai')).toBe(3);
+    expect(maximumTotal).toBe(1);
+    expect(maximumProviders.get('groq')).toBe(1);
+    expect(maximumProviders.get('cloudflare-workers-ai')).toBe(1);
     expect(Math.max(...maximumModels.values())).toBe(1);
     expect(new Set(firstStarted.slice(0, 2))).toEqual(
       new Set(['project1', 'project2']),
@@ -281,6 +303,38 @@ describe('bounded AI assessment scheduler', () => {
     expect(result.jobs).toHaveLength(36);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
     expect(result.jobs.every((job) => job.result !== null)).toBe(true);
+  }, 15_000);
+
+  it('does not overlap provider calls from concurrent runs sharing a ledger', async () => {
+    enableModel('openai/gpt-oss-20b');
+    let active = 0;
+    let maximumActive = 0;
+    const groq = adapter('groq', async (request) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return createCompletion(request);
+    });
+    const instance = scheduler(
+      { groq },
+      { cloudflareMinRequestIntervalMs: 0 },
+    );
+
+    const [first, second] = await Promise.all([
+      instance.run([{
+        batch: batchInput('serial-run-one'),
+        assessments: [makeAssessment('serial-component-one')],
+      }]),
+      instance.run([{
+        batch: batchInput('serial-run-two'),
+        assessments: [makeAssessment('serial-component-two')],
+      }]),
+    ]);
+
+    expect(maximumActive).toBe(1);
+    expect(first.jobs[0]?.status).toBe('succeeded');
+    expect(second.jobs[0]?.status).toBe('succeeded');
   });
 
   it('reuses successful idempotent jobs without making a duplicate provider call', async () => {
@@ -382,6 +436,62 @@ describe('bounded AI assessment scheduler', () => {
     }
 
     expect(requestTimes[1] - requestTimes[0]).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it('spaces Cloudflare model requests by at least five seconds', async () => {
+    const modelIds = [
+      '@cf/zai-org/glm-4.7-flash',
+      '@cf/nvidia/nemotron-3-120b-a12b',
+      '@cf/google/gemma-4-26b-a4b-it',
+    ] as const;
+    for (const modelId of modelIds) {
+      enableModel(modelId);
+    }
+
+    let clock = Date.now();
+    const requestTimes: number[] = [];
+    let calls = 0;
+    const cloudflare = adapter('cloudflare-workers-ai', (request) => {
+      requestTimes.push(clock);
+      calls += 1;
+      if (calls === 1) {
+        throw new ProviderRequestError('temporary provider failure', {
+          providerId: 'cloudflare-workers-ai',
+          kind: 'unavailable',
+          retryable: true,
+          statusCode: 503,
+          providerCode: null,
+          retryAfterMs: 0,
+          providerRequestId: null,
+        });
+      }
+      return createCompletion(request);
+    });
+
+    const result = await scheduler(
+      { 'cloudflare-workers-ai': cloudflare },
+      {
+        limits: { retryBaseMs: 0, retryMaxMs: 0 },
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          clock += milliseconds;
+        },
+      },
+    ).run([
+      {
+        batch: batchInput('cloudflare-paced-project'),
+        assessments: [makeAssessment('component-one')],
+      },
+    ]);
+
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
+    expect(requestTimes).toHaveLength(4);
+    for (let index = 1; index < requestTimes.length; index += 1) {
+      expect(requestTimes[index]! - requestTimes[index - 1]!)
+        .toBeGreaterThanOrEqual(5_000);
+    }
   });
 
   it('reserves estimated tokens against the verified TPM limit', async () => {
@@ -515,6 +625,48 @@ describe('bounded AI assessment scheduler', () => {
       estimatedInputTokens: 100,
       estimatedOutputTokens: 2_048,
     });
+  });
+
+  it('uses the default limit of three total attempts for transient failures', async () => {
+    const modelId = 'openai/gpt-oss-20b';
+    enableModel(modelId);
+    const retryDelay = vi.fn(async () => undefined);
+    let calls = 0;
+    const groq = adapter('groq', (request) => {
+      calls += 1;
+      if (calls < 3) {
+        throw new ProviderRequestError('temporarily unavailable', {
+          providerId: 'groq',
+          kind: 'unavailable',
+          retryable: true,
+          statusCode: 503,
+          providerCode: null,
+          retryAfterMs: null,
+          providerRequestId: null,
+        });
+      }
+      return createCompletion(request);
+    });
+
+    const result = await scheduler(
+      { groq },
+      { sleep: retryDelay },
+    ).run([
+      {
+        batch: batchInput('three-attempt-retry-project'),
+        assessments: [makeAssessment('retry-component')],
+      },
+    ]);
+    const job = result.jobs[0];
+
+    expect(job?.status).toBe('succeeded');
+    expect(calls).toBe(3);
+    expect(retryDelay).toHaveBeenCalledTimes(2);
+    expect(ledger.getAttempts(job!.jobId).map((attempt) => attempt.status)).toEqual([
+      'retryable_failed',
+      'retryable_failed',
+      'succeeded',
+    ]);
   });
 
   it('does not retry or blindly resend an uncertain provider outcome', async () => {

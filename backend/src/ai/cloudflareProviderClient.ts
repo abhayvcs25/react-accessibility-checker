@@ -103,7 +103,12 @@ function getRetryAfterMs(value: string | null, now = Date.now()): number | null 
 }
 
 function parseUsage(value: unknown): ProviderTokenUsage {
-  if (value === undefined || value === null) {
+  const usage = isRecord(value) && isRecord(value.result)
+    ? value.result.usage
+    : isRecord(value) && isRecord(value.usage)
+      ? value.usage
+      : undefined;
+  if (usage === undefined || usage === null) {
     return {
       inputTokens: null,
       outputTokens: null,
@@ -111,7 +116,7 @@ function parseUsage(value: unknown): ProviderTokenUsage {
       source: 'unknown',
     };
   }
-  if (!isRecord(value)) {
+  if (!isRecord(usage)) {
     throw requestError(
       'malformed_response',
       'Cloudflare returned malformed usage data.',
@@ -134,7 +139,7 @@ function parseUsage(value: unknown): ProviderTokenUsage {
   };
   let hasUsage = false;
   for (const [sourceKey, targetKey] of fields) {
-    const count = value[sourceKey];
+    const count = usage[sourceKey];
     if (count === undefined || count === null) {
       continue;
     }
@@ -162,8 +167,9 @@ function parseCompletion(
 ): ProviderCompletion {
   if (
     !isRecord(value) ||
-    !Array.isArray(value.choices) ||
-    value.choices.length === 0
+    !isRecord(value.result) ||
+    !Array.isArray(value.result.choices) ||
+    value.result.choices.length === 0
   ) {
     throw requestError(
       'malformed_response',
@@ -171,7 +177,7 @@ function parseCompletion(
       { providerRequestId: responseRequestId },
     );
   }
-  const choice = value.choices[0];
+  const choice = value.result.choices[0];
   if (
     !isRecord(choice) ||
     !isRecord(choice.message) ||
@@ -196,14 +202,17 @@ function parseCompletion(
   }
 
   const finishReason = choice.finish_reason;
+  const resultId = safeProviderRequestId(value.result.id, apiToken);
   const providerRequestId =
-    safeProviderRequestId(value.id, apiToken) ?? responseRequestId;
+    safeProviderRequestId(value.id, apiToken) ??
+    resultId ??
+    responseRequestId;
   const common = {
     providerId: 'cloudflare-workers-ai' as const,
     modelId,
     providerRequestId,
     finishReason,
-    usage: parseUsage(value.usage),
+    usage: parseUsage(value),
   };
   if (finishReason === 'stop') {
     try {
@@ -249,8 +258,12 @@ function getProviderRequestId(
   const bodyRequestId = isRecord(value)
     ? safeProviderRequestId(value.id, secret)
     : null;
-  if (bodyRequestId !== null) {
-    return bodyRequestId;
+  const resultRequestId =
+    isRecord(value) && isRecord(value.result)
+      ? safeProviderRequestId(value.result.id, secret)
+      : null;
+  if (bodyRequestId !== null || resultRequestId !== null) {
+    return bodyRequestId ?? resultRequestId;
   }
   return (
     safeProviderRequestId(response.headers.get('cf-ray'), secret) ??
@@ -275,6 +288,20 @@ function classifyHttpError(
       'quota_exhausted',
       'Cloudflare Workers AI daily free allocation is exhausted.',
       errorOptions,
+    );
+  }
+  if (code === '3030') {
+    return requestError(
+      'unavailable',
+      'Cloudflare Workers AI capacity is temporarily unavailable.',
+      { ...errorOptions, retryable: true, retryAfterMs },
+    );
+  }
+  if (code === '8007') {
+    return requestError(
+      'unavailable',
+      'Cloudflare Workers AI reported a transient internal error.',
+      { ...errorOptions, retryable: true, retryAfterMs },
     );
   }
   if (code === '3040') {
@@ -424,21 +451,19 @@ export function createCloudflareProviderAdapter(
       try {
         requestBody = JSON.stringify({
           model: request.modelId,
-          messages: request.messages,
-          max_completion_tokens: request.maxOutputTokens,
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: request.responseSchema.name,
-              ...(request.responseSchema.description
-                ? { description: request.responseSchema.description }
-                : {}),
-              schema: request.responseSchema.schema,
-              strict: true,
+          input: {
+            messages: request.messages,
+            chat_template_kwargs: { enable_thinking: false },
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                ...request.responseSchema.schema,
+                strict: true,
+              },
             },
+            temperature: 0.3,
+            max_tokens: request.maxOutputTokens,
           },
-          stream: false,
-          options: { rejectIfBusy: true },
         });
       } catch {
         throw requestError(

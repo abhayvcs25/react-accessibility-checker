@@ -44,7 +44,7 @@ function createScheduler(
               targetId: preparedRequest.job.componentId,
               ruleId: preparedRequest.job.ruleIds[0] ?? '',
               status: 'potential_issue',
-              explanation: 'The available label may not explain the action.',
+              explanation: 'Violation: The available label may not explain the action.',
               evidenceRefs: [...preparedRequest.sentEvidenceRefIds],
               providerId: model.providerId,
               modelId: model.modelId,
@@ -153,6 +153,13 @@ describe('contextual assessment scheduler integration', () => {
       prepared?.sentEvidenceRefIds,
     );
     expect(prepared?.request.messages[1]?.content).not.toContain(html);
+    expect(prepared?.request.messages[0]?.content).toContain(
+      'start explanation with exactly "Violation:"',
+    );
+    expect(prepared?.request.messages[0]?.content).toContain(
+      'Do not suggest IBM, another analyzer, a generic website, or an external source',
+    );
+    expect(prepared?.request.timeoutMs).toBe(45_000);
     expect(execution.outcomes).toMatchObject([
       {
         jobId: 'job-1',
@@ -161,6 +168,29 @@ describe('contextual assessment scheduler integration', () => {
         status: 'succeeded',
         validationStatus: 'valid',
       },
+    ]);
+  });
+
+  it('assigns each component to one model in order instead of assessing every component with every model', async () => {
+    const twoButtonHtml =
+      '<!doctype html><html><body><button>Save</button><button>Cancel</button></body></html>';
+    const context = adaptContextSnapshotV2(
+      extractHtmlContextResultV2(twoButtonHtml),
+    );
+    expect(context.status).toBe('ready');
+    expect(context.input.units).toHaveLength(2);
+
+    const { scheduler } = createScheduler();
+    await runContextualAssessmentJobs(context, twoButtonHtml, filename, {
+      environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+      scheduler,
+    });
+
+    const batch = scheduler.run.mock.calls[0]?.[0][0];
+    expect(batch?.assessments).toHaveLength(2);
+    expect(batch?.assessments.map((assessment) => assessment.modelId)).toEqual([
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
     ]);
   });
 

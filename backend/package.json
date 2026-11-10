@@ -10,6 +10,7 @@
     "dev": "tsx watch src/dev.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "probe:cloudflare": "tsx scripts/cloudflare-model-verification.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

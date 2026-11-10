@@ -17,6 +17,7 @@ import {
 const GROQ_SUPPORTED_MODEL_IDS = [
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
+  'qwen/qwen3.8-27b',
 ] as const satisfies readonly CandidateModelId[];
 
 interface GroqClientOptions {
@@ -319,8 +320,6 @@ export function createGroqProviderAdapter(
       }
       const candidate = MODEL_CANDIDATES[modelId];
       if (
-        candidate.documentedCapabilities.strictJsonSchemaModelSupport !==
-          'documented' ||
         candidate.documentedCapabilities.strictJsonSchemaParameter !==
           'documented' ||
         candidate.structuredOutput !== 'strict_json_schema'
@@ -359,6 +358,8 @@ export function createGroqProviderAdapter(
           model: request.modelId,
           messages: request.messages,
           max_completion_tokens: request.maxOutputTokens,
+          reasoning_effort: 'low',
+          include_reasoning: false,
           response_format: {
             type: 'json_schema',
             json_schema: {

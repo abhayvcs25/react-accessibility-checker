@@ -64,7 +64,7 @@ describe('AI status routes during provider migration', () => {
     }
   });
 
-  it('reports only credential presence and does not probe providers', async () => {
+  it('reports evaluation eligibility without probing providers or overstating verification', async () => {
     vi.stubEnv('GROQ_API_KEY', 'test-groq-secret-placeholder');
     vi.stubEnv('CLOUDFLARE_ACCOUNT_ID', 'test-account-id');
     vi.stubEnv('CLOUDFLARE_API_TOKEN', 'test-cloudflare-secret-placeholder');
@@ -95,9 +95,20 @@ describe('AI status routes during provider migration', () => {
       expect(JSON.parse(body).models).toHaveLength(6);
       expect(
         JSON.parse(body).models.every(
-          (model: { eligibility: string; operatorEnabled: boolean }) =>
-            model.eligibility === 'blocked_unverified' &&
-            !model.operatorEnabled,
+          (model: {
+            eligibility: string;
+            operatorEnabled: boolean;
+            verificationStatus: string;
+            runtimeVerificationStatus: string;
+            eligibilityReason: string;
+          }) =>
+            model.eligibility === 'eligible' &&
+            model.operatorEnabled &&
+            model.verificationStatus === 'partially_verified' &&
+            model.runtimeVerificationStatus === 'partially_verified' &&
+            model.eligibilityReason.includes(
+              'accessibility assessment accuracy remains unverified',
+            ),
         ),
       ).toBe(true);
     } finally {

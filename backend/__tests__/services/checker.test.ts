@@ -163,7 +163,8 @@ describe('analyzeHtml context extraction integration', () => {
         models: expect.arrayContaining([
           expect.objectContaining({
             modelId: 'openai/gpt-oss-120b',
-            status: 'blocked',
+            status: 'not_run',
+            eligibility: 'eligible',
             validatedCount: 0,
           }),
         ]),
@@ -203,7 +204,8 @@ describe('analyzeHtml context extraction integration', () => {
     expect(
       response.advisoryReport.models.every(
         (model) =>
-          model.status === 'blocked' &&
+          model.status === 'not_run' &&
+          model.eligibility === 'eligible' &&
           model.validatedCount === 0 &&
           model.jobCount === 0,
       ),

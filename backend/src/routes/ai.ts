@@ -19,6 +19,7 @@ router.get('/api/ai/readiness', (_req, res) => {
     verificationStatus: candidate.verificationStatus,
     runtimeVerificationStatus: candidate.runtimeVerificationStatus,
     operatorEnabled: candidate.operatorEnabled,
+    eligibilityReason: candidate.eligibilityReason,
   }));
   const contextualAiOptIn = getServerOptInState('RAC_CONTEXTUAL_AI_ENABLED');
   const liveTestOptIn = getServerOptInState('RAC_AI_LIVE_TEST_ENABLED');

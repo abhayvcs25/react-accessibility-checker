@@ -9,7 +9,6 @@ import {
   getServerOptInState,
   isCandidateEligible,
   isModelEligible,
-  ModelNotEligibleError,
   requireEligibleModel,
   type CandidateModelId,
   type ModelCandidate,
@@ -68,9 +67,12 @@ describe('shared model catalog', () => {
       autoRecharge: false,
       projectLimitsConfigured: false,
       developerUpgradesAvailable: false,
-      verificationDate: '2026-11-09',
+      verificationDate: '2026-11-10',
     });
     expect(AI_PROVIDERS['cloudflare-workers-ai']).toMatchObject({
+      endpoint:
+        'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run',
+      endpointKind: 'native-ai-run',
       accountVerification: {
         status: 'verified',
         source: 'operator_reported_dashboard',
@@ -80,7 +82,7 @@ describe('shared model catalog', () => {
         aiGatewayConfigured: false,
         aiGatewayCreditsAdded: false,
         freeNeuronsConsumedAtVerification: 0,
-        verificationDate: '2026-11-09',
+        verificationDate: '2026-11-10',
       },
       publishedLimits: {
         sharedFreeNeuronsPerDay: 10_000,
@@ -94,7 +96,7 @@ describe('shared model catalog', () => {
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
       expect(MODEL_CANDIDATES[modelId]).toMatchObject({
         verificationStatus: 'partially_verified',
-        runtimeVerificationStatus: 'unverified',
+        runtimeVerificationStatus: 'partially_verified',
       });
     }
   });
@@ -119,7 +121,7 @@ describe('shared model catalog', () => {
       outputLimitEvidence: 'provider_documented',
       applicationMaxOutputTokens: 2_048,
       requiredStructuredOutput: 'strict_json_schema',
-      structuredOutput: 'unverified',
+      structuredOutput: 'strict_json_schema',
     });
     expect(MODEL_CANDIDATES['@cf/zai-org/glm-4.7-flash']).toMatchObject({
       contextTokens: 131_072,
@@ -150,7 +152,7 @@ describe('shared model catalog', () => {
         reasoning: 'documented',
         zeroDataRetention: 'documented',
       },
-      structuredOutput: 'unverified',
+      structuredOutput: 'strict_json_schema',
     });
     expect(
       MODEL_CANDIDATES['@cf/nvidia/nemotron-3-120b-a12b'],
@@ -172,7 +174,7 @@ describe('shared model catalog', () => {
         vision: 'unconfirmed',
         batch: 'unconfirmed',
       },
-      structuredOutput: 'unverified',
+      structuredOutput: 'strict_json_schema',
     });
     expect(
       MODEL_CANDIDATES['@cf/google/gemma-4-26b-a4b-it'],
@@ -194,25 +196,26 @@ describe('shared model catalog', () => {
         vision: 'documented',
         batch: 'documented',
       },
-      structuredOutput: 'unverified',
+      structuredOutput: 'strict_json_schema',
     });
   });
 
-  it('blocks every candidate until strict zero-cost eligibility is verified', () => {
+  it('enables all candidates for operator-approved assessment evaluation without marking assessments verified', () => {
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
       expect(MODEL_CANDIDATES[modelId]).toMatchObject({
-        eligibility: 'blocked_unverified',
+        eligibility: 'eligible',
         verificationStatus: 'partially_verified',
-        verificationDate: '2026-11-09',
+        verificationDate: '2026-11-10',
+        runtimeVerificationStatus: 'partially_verified',
+        operatorEnabled: true,
       });
-      expect(MODEL_CANDIDATES[modelId].runtimeVerificationStatus).toBe(
-        'unverified',
+      expect(MODEL_CANDIDATES[modelId].accountVerificationStatus).toBe(
+        'verified',
       );
-      expect(MODEL_CANDIDATES[modelId].accountVerificationStatus).not.toBe(
-        'unverified',
+      expect(MODEL_CANDIDATES[modelId].eligibilityReason).toContain(
+        'accessibility assessment accuracy remains unverified',
       );
-      expect(MODEL_CANDIDATES[modelId].operatorEnabled).toBe(false);
-      expect(isModelEligible(modelId)).toBe(false);
+      expect(isModelEligible(modelId)).toBe(true);
     }
     for (const modelId of expectedGroqModels) {
       expect(MODEL_CANDIDATES[modelId].accountEligibility).toBe(
@@ -236,16 +239,23 @@ describe('shared model catalog', () => {
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
       expect(MODEL_CANDIDATES[modelId].applicationMaxOutputTokens).toBe(2_048);
     }
-    expect(getEligibleModels()).toEqual([]);
-    expect(() => requireEligibleModel('openai/gpt-oss-120b')).toThrow(
-      ModelNotEligibleError,
-    );
+    expect(getEligibleModels()).toHaveLength(6);
+    expect(requireEligibleModel('openai/gpt-oss-120b')).toMatchObject({
+      verificationStatus: 'partially_verified',
+      runtimeVerificationStatus: 'partially_verified',
+      eligibility: 'eligible',
+    });
   });
 
-  it('rejects candidates that are not fully verified', () => {
+  it('requires explicit operator enablement for partially verified models', () => {
     expect(
       isCandidateEligible(
-        makeVerifiedCandidate({ verificationStatus: 'partially_verified' }),
+        makeVerifiedCandidate({
+          verificationStatus: 'partially_verified',
+          runtimeVerificationStatus: 'partially_verified',
+          operatorEnabled: false,
+          eligibility: 'disabled_by_operator',
+        }),
       ),
     ).toBe(false);
     expect(
@@ -260,9 +270,12 @@ describe('shared model catalog', () => {
     expect(isCandidateEligible(missingVerificationStatus)).toBe(false);
     expect(
       isCandidateEligible(
-        makeVerifiedCandidate({ runtimeVerificationStatus: 'unverified' }),
+        makeVerifiedCandidate({
+          verificationStatus: 'partially_verified',
+          runtimeVerificationStatus: 'partially_verified',
+        }),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('requires explicit zero-cost account eligibility', () => {
@@ -332,6 +345,16 @@ describe('shared model catalog', () => {
           documentedCapabilities: {
             ...MODEL_CANDIDATES['openai/gpt-oss-20b'].documentedCapabilities,
             strictJsonSchemaModelSupport: 'provisional',
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isCandidateEligible(
+        makeVerifiedCandidate({
+          documentedCapabilities: {
+            ...MODEL_CANDIDATES['openai/gpt-oss-20b'].documentedCapabilities,
+            strictJsonSchemaModelSupport: 'unconfirmed',
           },
         }),
       ),
@@ -413,8 +436,8 @@ describe('shared model catalog', () => {
     });
     expect(AI_APPLICATION_LIMITS).toEqual({
       maxConcurrentPerModel: 1,
-      maxConcurrentPerProvider: 3,
-      maxConcurrentTotal: 6,
+      maxConcurrentPerProvider: 1,
+      maxConcurrentTotal: 1,
       requestsPerMinutePerProvider: null,
       tokensPerMinutePerProvider: null,
     });
@@ -485,14 +508,14 @@ describe('server-side provider credentials', () => {
     ).toBe('invalid');
   });
 
-  it('does not make blocked candidates eligible when credentials are present', () => {
-    expect(getEligibleModels()).toEqual([]);
+  it('keeps catalog eligibility independent from credential presence', () => {
+    expect(getEligibleModels()).toHaveLength(6);
     expect(
       getProviderCredentialReadiness('groq', {
         GROQ_API_KEY: 'test-groq-secret-placeholder',
       }).configured,
     ).toBe(true);
-    expect(getEligibleModels()).toEqual([]);
+    expect(getEligibleModels()).toHaveLength(6);
   });
 
   it('reports missing Groq credentials without returning a secret value', () => {

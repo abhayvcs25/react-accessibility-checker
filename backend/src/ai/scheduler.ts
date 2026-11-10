@@ -29,13 +29,14 @@ import {
   type ProviderRequest,
 } from './contracts.js';
 
-const DEFAULT_MAX_CONCURRENT_TOTAL = 6;
-const DEFAULT_MAX_CONCURRENT_PER_PROVIDER = 3;
+const DEFAULT_MAX_CONCURRENT_TOTAL = 1;
+const DEFAULT_MAX_CONCURRENT_PER_PROVIDER = 1;
 const DEFAULT_MAX_CONCURRENT_PER_MODEL = 1;
 const DEFAULT_MAX_QUEUE_SIZE = 300;
-const DEFAULT_MAX_ATTEMPTS = 2;
+const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 500;
 const DEFAULT_RETRY_MAX_MS = 30_000;
+const CLOUDFLARE_MIN_REQUEST_INTERVAL_MS = 5_000;
 const MAX_PROVIDER_TIMEOUT_MS = 120_000;
 
 export interface PreparedAssessment {
@@ -46,6 +47,7 @@ export interface PreparedAssessment {
 }
 
 export interface ScheduledAssessment {
+  modelId?: CandidateModelId;
   prepare(model: EligibleModelCandidate): PreparedAssessment;
 }
 
@@ -66,6 +68,7 @@ export interface SchedulerOptions {
     retryBaseMs?: number;
     retryMaxMs?: number;
   };
+  cloudflareMinRequestIntervalMs?: number;
   now?: () => number;
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
@@ -571,10 +574,13 @@ export class BoundedAssessmentScheduler {
   private readonly maxAttempts: number;
   private readonly retryBaseMs: number;
   private readonly retryMaxMs: number;
+  private readonly cloudflareMinRequestIntervalMs: number;
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   private readonly random: () => number;
   private readonly budget: BudgetController;
+  private readonly providerPacingTails = new Map<AiProviderId, Promise<void>>();
+  private readonly providerLastRequestAt = new Map<AiProviderId, number>();
 
   constructor(private readonly options: SchedulerOptions) {
     const limits = options.limits ?? {};
@@ -588,6 +594,9 @@ export class BoundedAssessmentScheduler {
     this.maxAttempts = limits.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.retryBaseMs = limits.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
     this.retryMaxMs = limits.retryMaxMs ?? DEFAULT_RETRY_MAX_MS;
+    this.cloudflareMinRequestIntervalMs =
+      options.cloudflareMinRequestIntervalMs ??
+      CLOUDFLARE_MIN_REQUEST_INTERVAL_MS;
     validateBound('maxConcurrentTotal', this.maxConcurrentTotal, 64);
     validateBound('maxConcurrentPerProvider', this.maxConcurrentPerProvider, 32);
     validateBound('maxConcurrentPerModel', this.maxConcurrentPerModel, 16);
@@ -600,6 +609,14 @@ export class BoundedAssessmentScheduler {
       this.retryMaxMs < this.retryBaseMs
     ) {
       throw new RangeError('Retry delays must be non-negative integer milliseconds.');
+    }
+    if (
+      !Number.isSafeInteger(this.cloudflareMinRequestIntervalMs) ||
+      this.cloudflareMinRequestIntervalMs < 0
+    ) {
+      throw new RangeError(
+        'The Cloudflare minimum request interval must be a non-negative integer number of milliseconds.',
+      );
     }
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
@@ -647,6 +664,46 @@ export class BoundedAssessmentScheduler {
     }
   }
 
+  private async waitForProviderPacing(
+    providerId: AiProviderId,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (providerId !== 'cloudflare-workers-ai') {
+      return;
+    }
+    if (this.cloudflareMinRequestIntervalMs === 0) {
+      return;
+    }
+
+    const previous = this.providerPacingTails.get(providerId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.providerPacingTails.set(providerId, current);
+    await previous;
+
+    try {
+      const lastRequestAt = this.providerLastRequestAt.get(providerId);
+      if (lastRequestAt !== undefined) {
+        const delay =
+          lastRequestAt + this.cloudflareMinRequestIntervalMs - this.now();
+        if (delay > 0) {
+          await this.sleep(delay, signal);
+        }
+      }
+      if (signal?.aborted) {
+        throw signal.reason ?? new Error('The request was cancelled before dispatch.');
+      }
+      this.providerLastRequestAt.set(providerId, this.now());
+    } finally {
+      release();
+      if (this.providerPacingTails.get(providerId) === current) {
+        this.providerPacingTails.delete(providerId);
+      }
+    }
+  }
+
   private async runExclusive(
     batches: readonly SchedulerBatchInput[],
     signal?: AbortSignal,
@@ -670,7 +727,15 @@ export class BoundedAssessmentScheduler {
       }));
     const plannedMaximum = batches.reduce(
       (total, batch) =>
-        total + batch.assessments.length * eligibleModels.length,
+        total +
+        batch.assessments.reduce(
+          (batchTotal, assessment) =>
+            batchTotal +
+            (assessment.modelId
+              ? 1
+              : eligibleModels.length),
+          0,
+        ),
       0,
     );
     const requestedAssessmentCount = batches.reduce(
@@ -700,7 +765,20 @@ export class BoundedAssessmentScheduler {
         requestPayloadHash: string;
       }> = [];
       for (const assessment of batchInput.assessments) {
-        for (const model of eligibleModels) {
+        const assignedModels = assessment.modelId
+          ? eligibleModels.filter((model) => model.modelId === assessment.modelId)
+          : eligibleModels;
+        if (assessment.modelId && assignedModels.length === 0) {
+          const candidate = MODEL_CANDIDATES[assessment.modelId];
+          preflightIssues.push({
+            batchId: '',
+            providerId: candidate.providerId,
+            modelId: candidate.modelId,
+            detail: candidate.eligibilityReason,
+          });
+          continue;
+        }
+        for (const model of assignedModels) {
           const adapter = this.options.adapters[model.providerId];
           if (!adapter) {
             preflightIssues.push({
@@ -1040,6 +1118,15 @@ export class BoundedAssessmentScheduler {
       }
       if (externalSignal?.aborted) {
         return toOutcome(task.batchId, job, 'cancelled_before_dispatch');
+      }
+      try {
+        await this.waitForProviderPacing(task.model.providerId, externalSignal);
+      } catch (error) {
+        if (externalSignal?.aborted) {
+          job = this.options.ledger.getJob(job.jobId) ?? job;
+          return toOutcome(task.batchId, job, 'cancelled_before_dispatch');
+        }
+        throw error;
       }
 
       let attempt;

@@ -59,7 +59,7 @@ function validAssessment(
     targetId: 'component-1',
     ruleId: 'color-contrast',
     status: 'potential_issue',
-    explanation: 'A visible text/background contrast issue was detected.',
+    explanation: 'Violation: A visible text/background contrast issue was detected.',
     evidenceRefs: ['evidence-1'],
     confidence: 0.8,
     providerId: 'groq',

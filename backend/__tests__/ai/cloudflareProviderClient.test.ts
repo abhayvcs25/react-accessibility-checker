@@ -82,20 +82,28 @@ function jsonResponse(
 function completion(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  return {
-    id: 'cf-chatcmpl-test-123',
-    choices: [
+  const {
+    id = 'cf-chatcmpl-test-123',
+    choices = [
       {
         finish_reason: 'stop',
         message: { content: '{"passed":true}' },
       },
     ],
-    usage: {
+    usage = {
       prompt_tokens: 18,
       completion_tokens: 4,
       total_tokens: 22,
     },
-    ...overrides,
+    ...envelope
+  } = overrides;
+  return {
+    ...envelope,
+    result: {
+      id,
+      choices,
+      usage,
+    },
   };
 }
 
@@ -135,6 +143,9 @@ describe('Cloudflare Workers AI provider adapter', () => {
         );
       expect(fetcher).toHaveBeenCalledTimes(1);
       expect(fetcher.mock.calls[0][0]).toBe(expectedEndpoint);
+      expect(expectedEndpoint).toBe(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run`,
+      );
       const init = fetcher.mock.calls[0][1];
       expect(init?.method).toBe('POST');
       expect(new Headers(init?.headers).get('authorization')).toBe(
@@ -142,22 +153,22 @@ describe('Cloudflare Workers AI provider adapter', () => {
       );
       expect(JSON.parse(String(init?.body))).toEqual({
         model: modelId,
-        messages: [
-          { role: 'system', content: 'Return the requested JSON result.' },
-          { role: 'user', content: 'Check the supplied content.' },
-        ],
-        max_completion_tokens: 2_048,
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: 'accessibility_result',
-            description: 'Structured accessibility assessment.',
-            schema,
-            strict: true,
+        input: {
+          messages: [
+            { role: 'system', content: 'Return the requested JSON result.' },
+            { role: 'user', content: 'Check the supplied content.' },
+          ],
+          chat_template_kwargs: { enable_thinking: false },
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              ...schema,
+              strict: true,
+            },
           },
+          temperature: 0.3,
+          max_tokens: 2_048,
         },
-        stream: false,
-        options: { rejectIfBusy: true },
       });
       expect(result).toEqual({
         providerId: 'cloudflare-workers-ai',
@@ -338,13 +349,30 @@ describe('Cloudflare Workers AI provider adapter', () => {
   });
 
   it.each([
-    ['missing choices', { choices: [] }],
+    ['missing choices', completion({ choices: [] })],
     [
       'empty content',
-      { choices: [{ finish_reason: 'stop', message: { content: '' } }] },
+      completion({
+        choices: [{ finish_reason: 'stop', message: { content: '' } }],
+      }),
     ],
   ])('rejects %s instead of returning a success', async (_label, body) => {
     const fetcher = createFetch(jsonResponse(body));
+
+    await expect(
+      createAdapter(fetcher).complete(makeRequest(modelIds[0])),
+    ).rejects.toMatchObject({
+      metadata: { kind: 'malformed_response' },
+    });
+  });
+
+  it('does not accept the previous top-level chat-completions response envelope', async () => {
+    const fetcher = createFetch(jsonResponse({
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '{"passed":true}' },
+        }],
+      }));
 
     await expect(
       createAdapter(fetcher).complete(makeRequest(modelIds[0])),
@@ -432,6 +460,29 @@ describe('Cloudflare Workers AI provider adapter', () => {
       },
     });
   });
+
+  it.each(['3030', '8007'])(
+    'classifies provider transient error %s as retryable unavailable',
+    async (code) => {
+      const fetcher = createFetch(
+        jsonResponse(
+          { success: false, errors: [{ code, message: 'transient failure' }] },
+          { status: 400 },
+        ),
+      );
+
+      await expect(
+        createAdapter(fetcher).complete(makeRequest(modelIds[0])),
+      ).rejects.toMatchObject({
+        metadata: {
+          kind: 'unavailable',
+          retryable: true,
+          statusCode: 400,
+          providerCode: code,
+        },
+      });
+    },
+  );
 
   it('classifies an untyped 429 as a rate limit', async () => {
     const fetcher = createFetch(

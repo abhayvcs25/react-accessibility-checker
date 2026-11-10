@@ -32,6 +32,10 @@ function eligibleModelId(modelId: CandidateModelId) {
     runtimeVerificationStatus: 'verified',
     eligibility: 'eligible',
     operatorEnabled: true,
+    documentedCapabilities: {
+      ...candidate.documentedCapabilities,
+      strictJsonSchemaModelSupport: 'documented',
+    },
   };
   return requireEligibleModel(modelId).modelId;
 }
@@ -100,6 +104,7 @@ describe('Groq provider adapter', () => {
   it.each([
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
+    'qwen/qwen3.8-27b',
   ] as const)('builds a strict-schema request for %s', async (modelId) => {
     const fetcher = createFetch(
       jsonResponse(completion(), {
@@ -127,6 +132,8 @@ describe('Groq provider adapter', () => {
         { role: 'user', content: 'Check the supplied content.' },
       ],
       max_completion_tokens: 2_048,
+      reasoning_effort: 'low',
+      include_reasoning: false,
       response_format: {
         type: 'json_schema',
         json_schema: {
@@ -355,20 +362,29 @@ describe('Groq provider adapter', () => {
     });
   });
 
-  it('rejects unsupported Qwen requests without making a request', async () => {
+  it('builds a strict-schema request for Qwen after capability verification', async () => {
     const fetcher = createFetch(jsonResponse(completion()));
     const adapter = createGroqProviderAdapter({
       fetcher,
       environment: { GROQ_API_KEY: apiKey },
     });
-    const request = makeRequest('openai/gpt-oss-20b');
-    Object.assign(request, { modelId: 'qwen/qwen3.8-27b' });
 
-    await expect(adapter.complete(request)).rejects.toMatchObject({
-      metadata: { kind: 'invalid_request' },
-      message: 'This Groq model is not enabled in the provider adapter.',
+    await adapter.complete(makeRequest('qwen/qwen3.8-27b'));
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: 'qwen/qwen3.8-27b',
+      max_completion_tokens: 2_048,
+      reasoning_effort: 'low',
+      include_reasoning: false,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          strict: true,
+          schema,
+        },
+      },
     });
-    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('redacts provider error text and never exposes the API key', async () => {

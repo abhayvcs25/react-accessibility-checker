@@ -54,6 +54,11 @@ const ALLOWED_STATUSES = new Set([
   'no_issue_detected',
   'insufficient_context',
 ]);
+const REQUIRED_EXPLANATION_PREFIX: Record<string, string> = {
+  potential_issue: 'Violation:',
+  no_issue_detected: 'Not violation:',
+  insufficient_context: 'Insufficient context:',
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -184,6 +189,10 @@ export function validateAssessment(
     !ALLOWED_STATUSES.has(value.status) ||
     value.providerId !== context.providerId ||
     value.modelId !== context.modelId ||
+    !value.explanation.startsWith(
+      REQUIRED_EXPLANATION_PREFIX[value.status] ?? '',
+    ) ||
+    new Set(value.evidenceRefs).size !== value.evidenceRefs.length ||
     value.evidenceRefs.some(
       (reference) =>
         typeof reference !== 'string' ||
