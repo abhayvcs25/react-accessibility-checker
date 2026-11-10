@@ -263,10 +263,14 @@ export interface AdvisoryFindingGroup {
   agreement:
     | 'unanimous_issue'
     | 'unanimous_no_issue'
+    | 'issue_detected'
+    | 'no_issue_detected'
     | 'insufficient_context'
     | 'disagreement';
   issueCount: number;
   validatedCount: number;
+  decisiveCount: number;
+  abstentionCount: number;
   assessments: AdvisoryAssessment[];
   equivalentFindings: AdvisoryEquivalentFinding[];
   relatedIbmIssueIds: string[];

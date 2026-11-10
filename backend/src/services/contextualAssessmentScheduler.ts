@@ -29,6 +29,7 @@ const RESULT_SCHEMA_VERSION = 'schema-v1';
 const RULE_REGISTRY_VERSION = 'contextual-rules-v1';
 const MAX_OUTPUT_TOKENS = 512;
 const REQUEST_TIMEOUT_MS = 45_000;
+const MAX_MODEL_ATTEMPTS_PER_TARGET = 3;
 
 const RULE_BY_TARGET_KIND: Partial<
   Record<TargetContextInputUnit['focal']['kind'], ContextualAssessmentRuleId>
@@ -276,6 +277,22 @@ function mapOutcomes(
   });
 }
 
+function getValidatedAssessmentStatus(
+  outcome: AdvisoryJobOutcome,
+): string | undefined {
+  if (
+    outcome.status !== 'succeeded' ||
+    outcome.validationStatus !== 'valid' ||
+    typeof outcome.normalizedResult !== 'object' ||
+    outcome.normalizedResult === null ||
+    Array.isArray(outcome.normalizedResult)
+  ) {
+    return undefined;
+  }
+  const status = outcome.normalizedResult.status;
+  return typeof status === 'string' ? status : undefined;
+}
+
 export async function runContextualAssessmentJobs(
   context: ContextAdapterResult | undefined,
   html: string,
@@ -312,44 +329,114 @@ export async function runContextualAssessmentJobs(
     return { outcomes: [] };
   }
 
-  const targetMetadata = new Map<string, PreparedTarget>();
   const eligibleModelIds = getEligibleModels().map((model) => model.modelId);
-  const batches: SchedulerBatchInput[] = [{
-    batch: createBatch(html, filename, eligibleUnits.length),
-    assessments: eligibleUnits.map(({ unit, ruleId, evidence }, index) => {
-      const target: PreparedTarget = {
-        targetId: unit.focal.id,
-        ruleId,
-        componentRef: unit.focal.id,
-        ...(unit.focal.sourceLocator?.kind === 'dom-path'
-          ? { domPath: unit.focal.sourceLocator.path }
-          : {}),
-        evidence,
-      };
-      targetMetadata.set(JSON.stringify([unit.focal.id, ruleId]), target);
-      const contextPayload = JSON.stringify({
-        target: unit.focal,
-        evidence: getNamingEvidence(unit),
-        completeness: unit.completeness,
-      });
-      const contextHash = hash(contextPayload);
-      const modelId =
-        eligibleModelIds.length > 0
-          ? eligibleModelIds[index % eligibleModelIds.length]
-          : undefined;
-      return {
-        ...(modelId ? { modelId } : {}),
-        prepare: (model) =>
-          prepareAssessment(unit, ruleId, model, contextHash, evidence),
-      };
-    }),
-  }];
-
+  const targetMetadata = new Map<string, PreparedTarget>();
+  const preparedTargets = eligibleUnits.map(({ unit, ruleId, evidence }, index) => {
+    const target: PreparedTarget = {
+      targetId: unit.focal.id,
+      ruleId,
+      componentRef: unit.focal.id,
+      ...(unit.focal.sourceLocator?.kind === 'dom-path'
+        ? { domPath: unit.focal.sourceLocator.path }
+        : {}),
+      evidence,
+    };
+    const targetKey = JSON.stringify([unit.focal.id, ruleId]);
+    targetMetadata.set(targetKey, target);
+    const contextPayload = JSON.stringify({
+      target: unit.focal,
+      evidence: getNamingEvidence(unit),
+      completeness: unit.completeness,
+    });
+    return {
+      unit,
+      ruleId,
+      evidence,
+      targetKey,
+      contextHash: hash(contextPayload),
+      initialModelIndex: eligibleModelIds.length > 0
+        ? index % eligibleModelIds.length
+        : -1,
+    };
+  });
+  const attemptedModelIds = new Map<string, Set<string>>();
+  const createAssessment = (
+    preparedTarget: (typeof preparedTargets)[number],
+    modelId: (typeof eligibleModelIds)[number] | undefined,
+  ) => ({
+    ...(modelId ? { modelId } : {}),
+    prepare: (model: EligibleModelCandidate) =>
+      prepareAssessment(
+        preparedTarget.unit,
+        preparedTarget.ruleId,
+        model,
+        preparedTarget.contextHash,
+        preparedTarget.evidence,
+      ),
+  });
   const scheduler = options.scheduler ?? getPersistentScheduler();
-  const result = await scheduler.run(batches);
-  return {
-    outcomes: mapOutcomes(result, targetMetadata),
-  };
+  const outcomes: AdvisoryJobOutcome[] = [];
+  let currentOutcomes = mapOutcomes(
+    await scheduler.run([{
+      batch: createBatch(html, filename, preparedTargets.length),
+      assessments: preparedTargets.map((preparedTarget) => {
+        const modelId = eligibleModelIds[preparedTarget.initialModelIndex];
+        if (modelId) {
+          attemptedModelIds.set(preparedTarget.targetKey, new Set([modelId]));
+        }
+        return createAssessment(preparedTarget, modelId);
+      }),
+    }]),
+    targetMetadata,
+  );
+  outcomes.push(...currentOutcomes);
+
+  for (
+    let retry = 1;
+    retry < MAX_MODEL_ATTEMPTS_PER_TARGET && eligibleModelIds.length > 1;
+    retry += 1
+  ) {
+    const nextAssessments = currentOutcomes.flatMap((outcome) => {
+      if (getValidatedAssessmentStatus(outcome) !== 'insufficient_context') {
+        return [];
+      }
+      const preparedTarget = preparedTargets.find(
+        (item) =>
+          item.targetKey ===
+          JSON.stringify([outcome.targetId, outcome.ruleId]),
+      );
+      if (!preparedTarget) {
+        return [];
+      }
+      const attempted = attemptedModelIds.get(preparedTarget.targetKey) ??
+        new Set<string>();
+      for (let offset = 1; offset <= eligibleModelIds.length; offset += 1) {
+        const candidateIndex =
+          (preparedTarget.initialModelIndex + offset) % eligibleModelIds.length;
+        const candidateModelId = eligibleModelIds[candidateIndex];
+        if (candidateModelId && !attempted.has(candidateModelId)) {
+          attempted.add(candidateModelId);
+          attemptedModelIds.set(preparedTarget.targetKey, attempted);
+          return [createAssessment(preparedTarget, candidateModelId)];
+        }
+      }
+      return [];
+    });
+    if (nextAssessments.length === 0) {
+      break;
+    }
+
+    currentOutcomes = mapOutcomes(
+      await scheduler.run([{
+        batch: createBatch(html, filename, nextAssessments.length),
+        assessments: nextAssessments,
+      }]),
+      targetMetadata,
+    );
+    outcomes.push(...currentOutcomes);
+  }
+
+  return { outcomes };
 }
 
 export function closeContextualAssessmentScheduler(): void {

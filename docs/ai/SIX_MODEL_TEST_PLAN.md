@@ -20,6 +20,12 @@ run from the website until this separate opt-in is changed.
 
 ## Local verification performed
 
+Contextual assessments assign each component to one model in round-robin
+order. Only a validated `insufficient_context` result triggers fallback to
+another distinct model, with at most two fallbacks (three models total per
+component). Provider failures, timeouts, invalid responses, and unknown
+outcomes do not trigger model fallback.
+
 The following checks use existing tests, mocked provider transports, and local
 build tools only:
 

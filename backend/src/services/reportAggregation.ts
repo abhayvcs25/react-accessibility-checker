@@ -248,15 +248,23 @@ function buildFindings(
       if (!first) {
         return null;
       }
-      const statuses = new Set(items.map((item) => item.status));
+      const decisiveItems = items.filter(
+        (item) => item.status !== 'insufficient_context',
+      );
+      const statuses = new Set(decisiveItems.map((item) => item.status));
+      const abstentionCount = items.length - decisiveItems.length;
       const agreement: AdvisoryFindingGroup['agreement'] =
         statuses.size > 1
           ? 'disagreement'
-          : first.status === 'potential_issue'
-            ? 'unanimous_issue'
-            : first.status === 'no_issue_detected'
-              ? 'unanimous_no_issue'
-              : 'insufficient_context';
+          : statuses.size === 0
+            ? 'insufficient_context'
+            : abstentionCount > 0
+              ? statuses.has('potential_issue')
+                ? 'issue_detected'
+                : 'no_issue_detected'
+              : statuses.has('potential_issue')
+                ? 'unanimous_issue'
+                : 'unanimous_no_issue';
       const allRelatedIbmIssueIds = ibmIssues.flatMap((issue, index) =>
         issue.ruleId === first.ruleId &&
         Boolean(first.domPath) &&
@@ -303,6 +311,8 @@ function buildFindings(
         issueCount: items.filter((item) => item.status === 'potential_issue')
           .length,
         validatedCount: items.length,
+        decisiveCount: decisiveItems.length,
+        abstentionCount,
         assessments: items,
         equivalentFindings: [...equivalentFindings.values()]
           .map((finding) => ({
@@ -371,7 +381,7 @@ function buildFixingPrompt(
     const findingLines = [
       `${index + 1}. Component ${finding.componentRef} (target ${finding.targetId})`,
       `   Rule: ${finding.ruleId}`,
-      `   Model agreement: ${finding.issueCount} of ${finding.validatedCount} validated assessments flagged an issue; ${finding.agreement}.`,
+      `   Model result: ${finding.issueCount} of ${finding.decisiveCount} decisive assessments flagged an issue; ${finding.abstentionCount} abstained; ${finding.agreement}.`,
     ];
     if (finding.domPath) {
       findingLines.push(`   DOM path: ${finding.domPath}`);

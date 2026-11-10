@@ -70,10 +70,14 @@ type AdvisoryFindingGroup = {
   agreement:
     | 'unanimous_issue'
     | 'unanimous_no_issue'
+    | 'issue_detected'
+    | 'no_issue_detected'
     | 'insufficient_context'
     | 'disagreement'
   issueCount: number
   validatedCount: number
+  decisiveCount: number
+  abstentionCount: number
   assessments: AdvisoryAssessment[]
   equivalentFindings: AdvisoryEquivalentFinding[]
   relatedIbmIssueIds: string[]
@@ -248,11 +252,15 @@ function isAdvisoryFindingGroup(value: unknown): value is AdvisoryFindingGroup {
     [
       'unanimous_issue',
       'unanimous_no_issue',
+      'issue_detected',
+      'no_issue_detected',
       'insufficient_context',
       'disagreement',
     ].includes(String(value.agreement)) &&
     typeof value.issueCount === 'number' &&
     typeof value.validatedCount === 'number' &&
+    typeof value.decisiveCount === 'number' &&
+    typeof value.abstentionCount === 'number' &&
     Array.isArray(value.assessments) &&
     value.assessments.every(isAdvisoryAssessment) &&
     Array.isArray(value.equivalentFindings) &&
@@ -414,6 +422,8 @@ function formatStatus(status: string): string {
       return 'Potential violation'
     case 'unanimous_no_issue':
       return 'No issue detected'
+    case 'issue_detected':
+      return 'Potential violation detected'
     case 'disagreement':
       return 'Disagreement'
     case 'insufficient_context':
@@ -1064,8 +1074,9 @@ function App() {
                           {formatStatus(finding.agreement)}
                         </span>
                         <span className="advisory-tag advisory-tag-subtle">
-                          {finding.issueCount} of {finding.validatedCount}{' '}
-                          flagged an issue
+                          {finding.issueCount} of {finding.decisiveCount}{' '}
+                          decisive assessments flagged;{' '}
+                          {finding.abstentionCount} abstained
                         </span>
                         <code className="finding-rule">{finding.ruleId}</code>
                       </div>

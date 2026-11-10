@@ -348,7 +348,7 @@ describe('mocked file-to-report acceptance', () => {
     });
     expect(report.advisoryReport.findings).toHaveLength(1);
     expect(report.advisoryReport.fixingPrompt).toContain(
-      'Model agreement: 1 of 2 validated assessments flagged an issue',
+      'Model result: 1 of 2 decisive assessments flagged an issue; 0 abstained',
     );
   });
 

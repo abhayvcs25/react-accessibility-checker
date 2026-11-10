@@ -264,6 +264,94 @@ describe('aggregateAdvisoryReport', () => {
     expect(report.fixingPrompt).toBeNull();
   });
 
+  it('does not count an abstention as disagreement with a later no-issue result', () => {
+    const report = aggregateAdvisoryReport(
+      [firstModel, secondModel],
+      [
+        outcome({
+          normalizedResult: {
+            targetId: 'target-1',
+            ruleId: 'BUTTON-PURPOSE-CLARITY',
+            providerId: 'groq',
+            modelId: firstModel.modelId,
+            status: 'insufficient_context',
+            explanation: 'Insufficient context: the target has no usable name.',
+            evidenceRefs: [],
+          },
+        }),
+        outcome({
+          jobId: 'job-2',
+          modelId: secondModel.modelId,
+          normalizedResult: {
+            targetId: 'target-1',
+            ruleId: 'BUTTON-PURPOSE-CLARITY',
+            providerId: 'groq',
+            modelId: secondModel.modelId,
+            status: 'no_issue_detected',
+            explanation: 'Not violation: the supplied label identifies the action.',
+            evidenceRefs: ['evidence-1'],
+          },
+        }),
+      ],
+      [],
+    );
+
+    expect(report.assessmentGroups[0]).toMatchObject({
+      agreement: 'no_issue_detected',
+      issueCount: 0,
+      validatedCount: 2,
+      decisiveCount: 1,
+      abstentionCount: 1,
+    });
+    expect(report.findings).toEqual([]);
+    expect(report.fixingPrompt).toBeNull();
+  });
+
+  it('keeps an abstention separate from a later validated issue', () => {
+    const report = aggregateAdvisoryReport(
+      [firstModel, secondModel],
+      [
+        outcome({
+          normalizedResult: {
+            targetId: 'target-1',
+            ruleId: 'BUTTON-PURPOSE-CLARITY',
+            providerId: 'groq',
+            modelId: firstModel.modelId,
+            status: 'insufficient_context',
+            explanation: 'Insufficient context: the target has no usable name.',
+            evidenceRefs: [],
+          },
+        }),
+        outcome({
+          jobId: 'job-2',
+          modelId: secondModel.modelId,
+          normalizedResult: {
+            targetId: 'target-1',
+            ruleId: 'BUTTON-PURPOSE-CLARITY',
+            providerId: 'groq',
+            modelId: secondModel.modelId,
+            status: 'potential_issue',
+            explanation: 'Violation: the available name does not explain the action.',
+            evidenceRefs: ['evidence-1'],
+          },
+        }),
+      ],
+      [],
+    );
+
+    expect(report.assessmentGroups[0]).toMatchObject({
+      agreement: 'issue_detected',
+      issueCount: 1,
+      validatedCount: 2,
+      decisiveCount: 1,
+      abstentionCount: 1,
+    });
+    expect(report.findings).toHaveLength(1);
+    expect(report.fixingPrompt).toContain(
+      'Model result: 1 of 1 decisive assessments flagged an issue; 1 abstained',
+    );
+  });
+
   it('keeps blocked, failed, quota-limited, and invalid outcomes out of prompt findings', () => {
     const invalid = outcome({
       jobId: 'invalid-job',

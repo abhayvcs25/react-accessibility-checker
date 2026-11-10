@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BatchLedger } from '../../src/ai/batchLedger.js';
-import type { EligibleModelCandidate } from '../../src/ai/config.js';
+import {
+  getEligibleModels,
+  type EligibleModelCandidate,
+} from '../../src/ai/config.js';
 import type {
   SchedulerBatchInput,
   SchedulerRunResult,
@@ -194,6 +197,83 @@ describe('contextual assessment scheduler integration', () => {
     ]);
   });
 
+  it('tries at most three distinct models when a validated assessment abstains', async () => {
+    const context = adaptContextSnapshotV2(extractHtmlContextResultV2(html));
+    const modelIds: string[] = [];
+    let runNumber = 0;
+    const statuses = [
+      'insufficient_context',
+      'insufficient_context',
+      'no_issue_detected',
+    ] as const;
+    const scheduler = {
+      run: vi.fn(async (batches: readonly SchedulerBatchInput[]) => {
+        const batch = batches[0];
+        const assessment = batch?.assessments[0];
+        if (!batch || !assessment?.modelId) {
+          throw new Error('Expected an explicitly assigned model assessment.');
+        }
+        const candidate = getEligibleModels().find(
+          (item) => item.modelId === assessment.modelId,
+        );
+        if (!candidate) {
+          throw new Error('The assigned model should be eligible.');
+        }
+        modelIds.push(candidate.modelId);
+        const prepared = assessment.prepare(candidate);
+        const status = statuses[runNumber++];
+        if (!status) {
+          throw new Error('The scheduler exceeded its three-attempt bound.');
+        }
+        return {
+          batches: [],
+          blockedModels: [],
+          preflightIssues: [],
+          jobs: [{
+            batchId: `batch-${runNumber}`,
+            jobId: `job-${runNumber}`,
+            providerId: candidate.providerId,
+            modelId: candidate.modelId,
+            componentId: prepared.job.componentId,
+            ruleId: prepared.job.ruleIds[0] ?? '',
+            status: 'succeeded',
+            errorClass: null,
+            result: {
+              targetId: prepared.job.componentId,
+              ruleId: prepared.job.ruleIds[0] ?? '',
+              providerId: candidate.providerId,
+              modelId: candidate.modelId,
+              status,
+              explanation:
+                status === 'insufficient_context'
+                  ? 'Insufficient context: the supplied evidence is incomplete.'
+                  : 'Not violation: the available evidence indicates a clear label.',
+              evidenceRefs:
+                status === 'insufficient_context'
+                  ? []
+                  : [...prepared.sentEvidenceRefIds],
+            },
+          }],
+        } satisfies SchedulerRunResult;
+      }),
+    };
+
+    const execution = await runContextualAssessmentJobs(context, html, filename, {
+      environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+      scheduler,
+    });
+
+    expect(scheduler.run).toHaveBeenCalledTimes(3);
+    expect(modelIds).toEqual([
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+      'qwen/qwen3.8-27b',
+    ]);
+    expect(execution.outcomes).toHaveLength(3);
+    expect(execution.outcomes.map((item) => item.normalizedResult?.status))
+      .toEqual(statuses);
+  });
+
   it('reports failed scheduler jobs without turning them into findings', async () => {
     const context = adaptContextSnapshotV2(extractHtmlContextResultV2(html));
     const { scheduler } = createScheduler('permanent_failed');
@@ -215,6 +295,7 @@ describe('contextual assessment scheduler integration', () => {
         errorClass: 'provider_authentication',
       },
     ]);
+    expect(scheduler.run).toHaveBeenCalledOnce();
   });
 
   it('reuses unchanged snapshots and creates a new snapshot when HTML changes', async () => {

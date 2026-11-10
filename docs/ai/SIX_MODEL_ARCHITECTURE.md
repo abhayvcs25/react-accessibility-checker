@@ -58,7 +58,11 @@ file. The JSON ledger continues to serve the legacy usage endpoint separately.
    to one model in deterministic round-robin order. Create one independently
    idempotent job for that target/model/rule; do not assess each target with
    every model. Additional targets cycle through the eligible model list.
-   Generic scheduler callers may explicitly request multi-model assessment.
+   If a completed, validated result is `insufficient_context`, try the next
+   distinct eligible model, up to two fallbacks (three models total per
+   target). Do not use model fallback for provider, timeout, invalid-response,
+   or other failures. Generic scheduler callers may explicitly request
+   multi-model assessment.
 5. **Provider call:** A provider-specific adapter builds the exact request,
    records an attempt before network I/O, enforces its own timeout/rate limit,
    and returns normalized transport metadata plus the provider response.
