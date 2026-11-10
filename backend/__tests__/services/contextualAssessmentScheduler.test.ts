@@ -146,12 +146,16 @@ describe('contextual assessment scheduler integration', () => {
     ) as {
       targetId?: string;
       ruleId?: string;
+      ruleGuidance?: string;
       context?: {
-        evidence?: Array<{ id: string }>;
+        evidence?: Array<{ id: string; text?: string; recordType?: string }>;
       };
     };
     expect(requestBody.targetId).toBe(prepared?.job.componentId);
     expect(requestBody.ruleId).toBe('BUTTON-PURPOSE-CLARITY');
+    expect(requestBody.ruleGuidance).toContain(
+      'Do not infer handler behavior',
+    );
     expect(requestBody.context?.evidence?.map(({ id }) => id)).toEqual(
       prepared?.sentEvidenceRefIds,
     );
@@ -174,7 +178,184 @@ describe('contextual assessment scheduler integration', () => {
     ]);
   });
 
-  it('assigns each component to one model in order instead of assessing every component with every model', async () => {
+  it('sends bounded associated static context and explicit rule criteria', async () => {
+    const contextualHtml =
+      '<!doctype html><html><body><form aria-label="Profile settings"><fieldset><legend>Contact details</legend><label for="email">Email address</label><input id="email" name="email" type="email"><label for="phone">Phone number</label><input id="phone" name="phone" type="tel"></fieldset></form></body></html>';
+    const extraction = extractHtmlContextResultV2(
+      contextualHtml,
+      'single-document',
+      filename,
+    );
+    expect(extraction.status).toBe('available');
+    if (extraction.status !== 'available') {
+      throw new Error('Expected static context extraction to succeed.');
+    }
+    const context = adaptContextSnapshotV2(extraction.snapshot);
+    const { scheduler, getPreparedRequest } = createScheduler();
+
+    await runContextualAssessmentJobs(context, contextualHtml, filename, {
+      environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+      scheduler,
+      projectContext: extraction.projectContext,
+    });
+
+    const requestBody = JSON.parse(
+      getPreparedRequest()?.request.messages[1]?.content ?? '{}',
+    ) as {
+      ruleGuidance?: string;
+      context?: {
+        target?: {
+          attributes?: {
+            inputType?: {
+              status: string;
+              value?: { value: string };
+            };
+          };
+        };
+        evidence?: Array<{
+          id: string;
+          text?: string;
+          recordType?: string;
+          tagName?: string;
+          category?: string;
+          targetKind?: string;
+          parentId?: string;
+          parentContext?: boolean;
+          attributes?: Record<string, unknown>;
+        }>;
+        parentContext?: {
+          rootRecordId: string;
+          recordIds: string[];
+          complete: boolean;
+        };
+      };
+    };
+    expect(requestBody.ruleGuidance).toContain(
+      'A name attribute alone does not establish purpose',
+    );
+    expect(requestBody.ruleGuidance).toContain(
+      'input-format constraint',
+    );
+    const formContext = requestBody.context?.evidence?.find(
+      (item) => item.tagName === 'form',
+    );
+    const fieldsetContext = requestBody.context?.evidence?.find(
+      (item) => item.tagName === 'fieldset',
+    );
+    const siblingControl = requestBody.context?.evidence?.find(
+      (item) =>
+        item.targetKind === 'form-control' &&
+        item.id !== requestBody.context?.evidence?.find(
+          (evidence) => evidence.targetKind === 'form-control',
+        )?.id,
+    );
+    expect(formContext).toMatchObject({
+      category: 'form',
+      parentContext: true,
+      attributes: {
+        'aria-label': {
+          status: 'present',
+          value: 'Profile settings',
+        },
+      },
+    });
+    expect(requestBody.context?.target?.attributes?.inputType).toMatchObject({
+      status: 'present',
+      value: { value: 'email' },
+    });
+    expect(fieldsetContext).toMatchObject({
+      category: 'group',
+      parentId: formContext?.id,
+      parentContext: true,
+    });
+    expect(siblingControl?.attributes).toMatchObject({
+      inputType: { status: 'present', value: { value: 'tel' } },
+    });
+    expect(requestBody.context?.parentContext).toMatchObject({
+      rootRecordId: formContext?.id,
+      complete: true,
+    });
+    expect(requestBody.context?.evidence).toContainEqual(
+      expect.objectContaining({
+        tagName: 'legend',
+        text: 'Contact details',
+      }),
+    );
+  });
+
+  it('marks a resolved native label as explicitly associated in the model payload', async () => {
+    const contextualHtml =
+      '<!doctype html><html><body><form><label for="month">Favorite color</label><input id="month" type="month" placeholder="Month"></form></body></html>';
+    const extraction = extractHtmlContextResultV2(
+      contextualHtml,
+      'single-document',
+      filename,
+    );
+    expect(extraction.status).toBe('available');
+    if (extraction.status !== 'available') {
+      throw new Error('Expected static context extraction to succeed.');
+    }
+    const context = adaptContextSnapshotV2(extraction.snapshot);
+    const { scheduler, getPreparedRequest } = createScheduler();
+
+    await runContextualAssessmentJobs(context, contextualHtml, filename, {
+      environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+      scheduler,
+      projectContext: extraction.projectContext,
+    });
+
+    const requestBody = JSON.parse(
+      getPreparedRequest()?.request.messages[1]?.content ?? '{}',
+    ) as {
+      ruleGuidance?: string;
+      context?: {
+        target?: {
+          attributes?: {
+            inputType?: { status: string; value?: { value: string } };
+          };
+        };
+        evidence?: Array<{
+          id: string;
+          text?: string;
+          associations?: Array<{ kind: string; provenance: string }>;
+        }>;
+      };
+    };
+    expect(requestBody.context?.target?.attributes?.inputType).toMatchObject({
+      status: 'present',
+      value: { value: 'month' },
+    });
+    expect(requestBody.context?.evidence).toContainEqual(
+      expect.objectContaining({
+        text: 'Favorite color',
+        associations: [
+          { kind: 'native-label', provenance: 'native-html' },
+        ],
+      }),
+    );
+    expect(requestBody.ruleGuidance).toContain(
+      'month, time, week, email',
+    );
+  });
+
+  it('does not assess authored ARIA names without browser-computed names', async () => {
+    const widgetHtml =
+      '<!doctype html><html><body><div role="button" aria-label="Thing" tabindex="0"></div></body></html>';
+    const context = adaptContextSnapshotV2(
+      extractHtmlContextResultV2(widgetHtml),
+    );
+    const scheduler = { run: vi.fn() };
+
+    await expect(
+      runContextualAssessmentJobs(context, widgetHtml, filename, {
+        environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+        scheduler,
+      }),
+    ).resolves.toEqual({ outcomes: [] });
+    expect(scheduler.run).not.toHaveBeenCalled();
+  });
+
+  it('randomizes model order while assigning each component to one distinct model', async () => {
     const twoButtonHtml =
       '<!doctype html><html><body><button>Save</button><button>Cancel</button></body></html>';
     const context = adaptContextSnapshotV2(
@@ -187,13 +368,14 @@ describe('contextual assessment scheduler integration', () => {
     await runContextualAssessmentJobs(context, twoButtonHtml, filename, {
       environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
       scheduler,
+      random: () => 0,
     });
 
     const batch = scheduler.run.mock.calls[0]?.[0][0];
     expect(batch?.assessments).toHaveLength(2);
     expect(batch?.assessments.map((assessment) => assessment.modelId)).toEqual([
-      'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
+      'qwen/qwen3.8-27b',
     ]);
   });
 
@@ -261,13 +443,14 @@ describe('contextual assessment scheduler integration', () => {
     const execution = await runContextualAssessmentJobs(context, html, filename, {
       environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
       scheduler,
+      random: () => 0,
     });
 
     expect(scheduler.run).toHaveBeenCalledTimes(3);
     expect(modelIds).toEqual([
-      'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
       'qwen/qwen3.8-27b',
+      '@cf/zai-org/glm-4.7-flash',
     ]);
     expect(execution.outcomes).toHaveLength(3);
     expect(execution.outcomes.map((item) => item.normalizedResult?.status))

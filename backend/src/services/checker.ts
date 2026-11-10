@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import * as aChecker from 'accessibility-checker'
 import type { AnalyzeIssue, AnalyzeResponse } from '../types/checker.js'
+import type { ProjectContextDocument } from '../types/contextProject.js'
 import type { ContextAdapterResult } from '../types/contextV2.js'
 import { MODEL_CANDIDATES } from '../ai/config.js'
 import { adaptContextSnapshotV2 } from './contextAdapterV2.js'
@@ -154,9 +155,17 @@ export function analyzeHtml(
     await ensureConfiguration()
 
     let contextAdapter: ContextAdapterResult | undefined
+    let projectContext: ProjectContextDocument | undefined
     const extractionStartedAt = performance.now()
     try {
-      const contextExtraction = extractHtmlContextResultV2(html)
+      const contextExtraction = extractHtmlContextResultV2(
+        html,
+        'single-document',
+        filename,
+      )
+      if (contextExtraction.status === 'available') {
+        projectContext = contextExtraction.projectContext
+      }
       contextAdapter = adaptContextSnapshotV2(contextExtraction)
       if (
         contextExtraction.status === 'unavailable' ||
@@ -212,6 +221,7 @@ export function analyzeHtml(
         contextAdapter,
         html,
         filename,
+        { projectContext },
       )
       aiOutcomes = execution.outcomes
     } catch {

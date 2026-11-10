@@ -2581,11 +2581,31 @@ export function extractHtmlContextDocumentV2(
   );
 }
 
-export function extractHtmlContextResultV2(html: string):
-  | { status: 'available'; snapshot: ContextSnapshot }
+export function extractHtmlContextResultV2(
+  html: string,
+  documentId = 'single-document',
+  filePath = 'input.html',
+):
+  | {
+      status: 'available';
+      snapshot: ContextSnapshot;
+      projectContext: ProjectContextDocument;
+    }
   | { status: 'unavailable'; reason: ContextUnavailableReason } {
   try {
-    return { status: 'available', snapshot: extractHtmlContextV2(html) };
+    const extracted = extractHtmlContextV2Internal(html);
+    return {
+      status: 'available',
+      snapshot: extracted.snapshot,
+      projectContext: createProjectDocument(
+        extracted.snapshot,
+        extracted.elements,
+        extracted.state,
+        html,
+        documentId,
+        filePath,
+      ),
+    };
   } catch {
     return { status: 'unavailable', reason: 'parser-failure' };
   }

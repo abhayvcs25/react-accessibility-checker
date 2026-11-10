@@ -249,6 +249,11 @@ describe('mocked file-to-report acceptance', () => {
       expect.objectContaining({ status: 'ready' }),
       html,
       filename,
+      expect.objectContaining({
+        projectContext: expect.objectContaining({
+          documentId: 'single-document',
+        }),
+      }),
     );
     expect(mocks.getCompliance).toHaveBeenCalledWith(
       html,

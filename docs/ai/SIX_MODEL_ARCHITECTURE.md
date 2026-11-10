@@ -54,10 +54,13 @@ file. The JSON ledger continues to serve the legacy usage endpoint separately.
    expected job count, per-request token bounds, and provider pacing. Record a
    batch even when some candidates are blocked, so the report can distinguish
    skipped work from a successful negative assessment.
-4. **Job scheduling:** For contextual assessment, assign each eligible target
-   to one model in deterministic round-robin order. Create one independently
-   idempotent job for that target/model/rule; do not assess each target with
-   every model. Additional targets cycle through the eligible model list.
+4. **Job scheduling:** For contextual assessment, shuffle the eligible model
+   order for each analysis, then assign each target in round-robin order.
+   This balances one-model-per-target assignments within each analysis while
+   varying which models receive work first across analyses. Create one
+   independently idempotent job for that target/model/rule; do not assess
+   each target with every model. Additional targets cycle through the
+   shuffled eligible model list.
    If a completed, validated result is `insufficient_context`, try the next
    distinct eligible model, up to two fallbacks (three models total per
    target). Do not use model fallback for provider, timeout, invalid-response,

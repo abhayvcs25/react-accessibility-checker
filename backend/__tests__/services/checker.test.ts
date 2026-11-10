@@ -127,7 +127,11 @@ describe('analyzeHtml context extraction integration', () => {
     const response = await analyzeHtml(html, filename);
 
     expect(extractHtmlContextResultV2).toHaveBeenCalledOnce();
-    expect(extractHtmlContextResultV2).toHaveBeenCalledWith(html);
+    expect(extractHtmlContextResultV2).toHaveBeenCalledWith(
+      html,
+      'single-document',
+      filename,
+    );
     expect(getCompliance).toHaveBeenCalledOnce();
     expect(getCompliance).toHaveBeenCalledWith(
       html,
