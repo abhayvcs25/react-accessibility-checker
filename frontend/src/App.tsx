@@ -46,6 +46,7 @@ type AdvisoryAssessment = {
   targetId: string
   componentRef: string
   domPath?: string
+  htmlSnippet?: string
   ruleId: string
   status: 'potential_issue' | 'no_issue_detected' | 'insufficient_context'
   explanation: string
@@ -66,6 +67,7 @@ type AdvisoryFindingGroup = {
   targetId: string
   componentRef: string
   domPath?: string
+  htmlSnippet?: string
   ruleId: string
   agreement:
     | 'unanimous_issue'
@@ -90,6 +92,8 @@ type AdvisoryJobReport = {
   modelId: string
   targetId: string
   componentRef: string
+  domPath?: string
+  htmlSnippet?: string
   ruleId: string
   status:
     | 'queued'
@@ -196,6 +200,7 @@ function isAdvisoryAssessment(value: unknown): value is AdvisoryAssessment {
     typeof value.targetId === 'string' &&
     typeof value.componentRef === 'string' &&
     (value.domPath === undefined || typeof value.domPath === 'string') &&
+    (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
     typeof value.ruleId === 'string' &&
     [
       'potential_issue',
@@ -248,6 +253,7 @@ function isAdvisoryFindingGroup(value: unknown): value is AdvisoryFindingGroup {
     typeof value.targetId === 'string' &&
     typeof value.componentRef === 'string' &&
     (value.domPath === undefined || typeof value.domPath === 'string') &&
+    (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
     typeof value.ruleId === 'string' &&
     [
       'unanimous_issue',
@@ -292,6 +298,8 @@ function isAdvisoryJobReport(value: unknown): value is AdvisoryJobReport {
       'componentRef',
       'ruleId',
     ].every((key) => typeof value[key] === 'string') &&
+    (value.domPath === undefined || typeof value.domPath === 'string') &&
+    (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
     [
       'queued',
       'in_progress',
@@ -1033,8 +1041,8 @@ function App() {
                         <code>
                           {job.providerId}/{job.modelId}
                         </code>{' '}
-                        — target <code>{job.targetId}</code>, rule{' '}
-                        <code>{job.ruleId}</code>: {formatStatus(job.status)};{' '}
+                        — <code>{job.ruleId}</code>:{' '}
+                        {formatStatus(job.status)};{' '}
                         validation {formatStatus(job.validationStatus)}
                         {job.errorClass ? `; ${job.errorClass}` : ''}
                         {job.providerRequestId
@@ -1046,6 +1054,30 @@ function App() {
                           job.outputTokens ?? 'unknown'
                         } (${job.tokenUsageSource})`}
                         .
+                        {job.domPath || job.htmlSnippet ? (
+                          <dl className="finding-details advisory-job-location">
+                            {job.domPath && (
+                              <div>
+                                <dt>DOM path</dt>
+                                <dd>
+                                  <code>{job.domPath}</code>
+                                </dd>
+                              </div>
+                            )}
+                            {job.htmlSnippet && (
+                              <div>
+                                <dt>HTML snippet</dt>
+                                <dd>
+                                  <pre>
+                                    <code>{job.htmlSnippet}</code>
+                                  </pre>
+                                </dd>
+                              </div>
+                            )}
+                          </dl>
+                        ) : (
+                          <p>Element source location is unavailable.</p>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -1081,19 +1113,28 @@ function App() {
                         <code className="finding-rule">{finding.ruleId}</code>
                       </div>
                       <dl className="finding-details">
-                        <div>
-                          <dt>Component</dt>
-                          <dd>
-                            <code>{finding.componentRef}</code> (target{' '}
-                            <code>{finding.targetId}</code>)
-                          </dd>
-                        </div>
                         {finding.domPath && (
                           <div>
                             <dt>DOM path</dt>
                             <dd>
                               <code>{finding.domPath}</code>
                             </dd>
+                          </div>
+                        )}
+                        {finding.htmlSnippet && (
+                          <div>
+                            <dt>HTML snippet</dt>
+                            <dd>
+                              <pre>
+                                <code>{finding.htmlSnippet}</code>
+                              </pre>
+                            </dd>
+                          </div>
+                        )}
+                        {!finding.domPath && !finding.htmlSnippet && (
+                          <div>
+                            <dt>Element location</dt>
+                            <dd>Source location unavailable.</dd>
                           </div>
                         )}
                         {finding.relatedIbmIssueIds.length > 0 && (
@@ -1145,12 +1186,7 @@ function App() {
                             : {formatStatus(assessment.status)} —{' '}
                             {assessment.explanation}
                             <span className="advisory-assessment-location">
-                              {' '}
-                              Component <code>{assessment.componentRef}</code>
-                              {assessment.domPath
-                                ? `; DOM path ${assessment.domPath}`
-                                : ''}
-                              .
+                              {' '}Assessment for this source element.
                             </span>
                             {assessment.confidence !== undefined && (
                               <span>

@@ -50,6 +50,7 @@ const MAX_ARIA_ATTRIBUTES = 20;
 const MAX_ID_REFERENCE_ATTRIBUTE_LENGTH = 10_000;
 const MAX_ID_REFERENCE_TOKENS = 50;
 const MAX_ID_REFERENCE_TARGETS_PER_ID = 20;
+const MAX_TARGET_HTML_SNIPPET_LENGTH = 500;
 
 const SKIPPED_TEXT_TAGS = new Set([
   'iframe',
@@ -677,6 +678,24 @@ function markTargetAttributesUnavailable(target: EvaluationTarget): void {
   };
 }
 
+function getDomPath(element: HtmlElement): string {
+  const pathParts: string[] = [];
+  let current: HtmlElement | undefined = element;
+  while (current) {
+    const parent = parentElement(current);
+    const sameTagSiblings = parent
+      ? parent.childNodes.filter(
+          (node): node is HtmlElement =>
+            isElement(node) && node.tagName === current?.tagName,
+        )
+      : [current];
+    const index = sameTagSiblings.indexOf(current);
+    pathParts.unshift(`${current.tagName}[${index + 1}]`);
+    current = parent;
+  }
+  return pathParts.length ? `/${pathParts.join('/')}` : '';
+}
+
 function sourceLocator(
   element: HtmlElement,
   html: string,
@@ -698,25 +717,12 @@ function sourceLocator(
       offsetUnit: 'utf16-code-unit',
     };
   }
-  const pathParts: string[] = [];
-  let current: HtmlElement | undefined = element;
-  while (current) {
-    const parent = parentElement(current);
-    const sameTagSiblings = parent
-      ? parent.childNodes.filter(
-          (node): node is HtmlElement =>
-            isElement(node) && node.tagName === current?.tagName,
-        )
-      : [current];
-    const index = sameTagSiblings.indexOf(current);
-    pathParts.unshift(`${current.tagName}[${index + 1}]`);
-    current = parent;
-  }
-  return pathParts.length
+  const path = getDomPath(element);
+  return path
     ? {
         kind: 'dom-path',
         format: 'element-index-path-v1',
-        path: `/${pathParts.join('/')}`,
+        path,
       }
     : undefined;
 }
@@ -1360,6 +1366,19 @@ function createProjectDocument(
       const targetElement = [...state.targetByElement.entries()].find(
         ([, candidate]) => candidate.id === target.id,
       )?.[0];
+      const targetLocator = targetElement
+        ? sourceLocator(targetElement, html)
+        : undefined;
+      const targetHtmlSnippet =
+        targetLocator?.kind === 'html-source-range'
+          ? html
+              .slice(targetLocator.startOffset, targetLocator.endOffset)
+              .trim()
+          : undefined;
+      const boundedTargetHtmlSnippet =
+        targetHtmlSnippet && targetHtmlSnippet.length > MAX_TARGET_HTML_SNIPPET_LENGTH
+          ? `${targetHtmlSnippet.slice(0, MAX_TARGET_HTML_SNIPPET_LENGTH)}...`
+          : targetHtmlSnippet;
       const targetDomText: ProjectTargetEvidence['targetDomText'] =
         target.text?.value
           ? {
@@ -1672,6 +1691,12 @@ function createProjectDocument(
 
       return {
         target: targetRef,
+        ...(targetElement
+          ? { domPath: getDomPath(targetElement) }
+          : {}),
+        ...(boundedTargetHtmlSnippet
+          ? { htmlSnippet: boundedTargetHtmlSnippet }
+          : {}),
         targetDomText,
         authoredNameInputs:
           authoredNameInputs.length > 0

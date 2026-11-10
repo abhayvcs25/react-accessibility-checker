@@ -84,6 +84,8 @@ export interface AuthoredNameInput {
 
 export interface ProjectTargetEvidence {
   target: ProjectRecordRef;
+  domPath?: string;
+  htmlSnippet?: string;
   targetDomText: ProjectEvidence<{ value: string; truncated: boolean }>;
   authoredNameInputs: ProjectEvidence<AuthoredNameInput[]>;
   nativeLabels: ProjectEvidence<ProjectRecordRef[]>;

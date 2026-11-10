@@ -239,6 +239,7 @@ export interface AdvisoryAssessment {
   targetId: string;
   componentRef: string;
   domPath?: string;
+  htmlSnippet?: string;
   ruleId: string;
   status: ContextualAssessmentValue;
   explanation: string;
@@ -259,6 +260,7 @@ export interface AdvisoryFindingGroup {
   targetId: string;
   componentRef: string;
   domPath?: string;
+  htmlSnippet?: string;
   ruleId: string;
   agreement:
     | 'unanimous_issue'
@@ -283,6 +285,8 @@ export interface AdvisoryJobReport {
   modelId: CandidateModelId;
   targetId: string;
   componentRef: string;
+  domPath?: string;
+  htmlSnippet?: string;
   ruleId: string;
   status: JobStatus;
   validationStatus: ValidationStatus;

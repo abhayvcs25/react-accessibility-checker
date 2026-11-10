@@ -338,6 +338,48 @@ describe('contextual assessment scheduler integration', () => {
     );
   });
 
+  it('passes an IBM-style DOM path and exact bounded HTML source snippet', async () => {
+    const sourceHtml =
+      '<!doctype html><html><body><main><form><label for="email">Email</label><input id="email" type="email"></form></main></body></html>';
+    const extraction = extractHtmlContextResultV2(
+      sourceHtml,
+      'single-document',
+      filename,
+    );
+    expect(extraction.status).toBe('available');
+    if (extraction.status !== 'available') {
+      throw new Error('Expected static context extraction to succeed.');
+    }
+    const context = adaptContextSnapshotV2(extraction.snapshot);
+    const { scheduler, getPreparedRequest } = createScheduler();
+    const execution = await runContextualAssessmentJobs(
+      context,
+      sourceHtml,
+      filename,
+      {
+        environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+        scheduler,
+        projectContext: extraction.projectContext,
+      },
+    );
+    const requestBody = JSON.parse(
+      getPreparedRequest()?.request.messages[1]?.content ?? '{}',
+    ) as {
+      context?: {
+        target?: { domPath?: string; htmlSnippet?: string };
+      };
+    };
+
+    expect(requestBody.context?.target).toMatchObject({
+      domPath: '/html[1]/body[1]/main[1]/form[1]/input[1]',
+      htmlSnippet: '<input id="email" type="email">',
+    });
+    expect(execution.outcomes[0]).toMatchObject({
+      domPath: '/html[1]/body[1]/main[1]/form[1]/input[1]',
+      htmlSnippet: '<input id="email" type="email">',
+    });
+  });
+
   it('does not assess authored ARIA names without browser-computed names', async () => {
     const widgetHtml =
       '<!doctype html><html><body><div role="button" aria-label="Thing" tabindex="0"></div></body></html>';

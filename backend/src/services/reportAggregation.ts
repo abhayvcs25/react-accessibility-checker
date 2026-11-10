@@ -66,6 +66,7 @@ export interface AdvisoryJobOutcome {
   targetId: string;
   componentRef: string;
   domPath?: string;
+  htmlSnippet?: string;
   ruleId: string;
   status: JobStatus;
   validationStatus: ValidationStatus;
@@ -177,6 +178,9 @@ function toAssessment(
   if (outcome.domPath) {
     assessment.domPath = boundedText(outcome.domPath);
   }
+  if (outcome.htmlSnippet) {
+    assessment.htmlSnippet = boundedText(outcome.htmlSnippet);
+  }
   return assessment;
 }
 
@@ -208,6 +212,10 @@ function toJobReport(
     modelId: outcome.modelId,
     targetId: boundedText(outcome.targetId, 256),
     componentRef: boundedText(outcome.componentRef),
+    ...(outcome.domPath ? { domPath: boundedText(outcome.domPath) } : {}),
+    ...(outcome.htmlSnippet
+      ? { htmlSnippet: boundedText(outcome.htmlSnippet) }
+      : {}),
     ruleId: boundedText(outcome.ruleId, 128),
     status:
       validationStatus === 'invalid' && outcome.status === 'succeeded'
@@ -306,6 +314,7 @@ function buildFindings(
         targetId: first.targetId,
         componentRef: first.componentRef,
         ...(first.domPath ? { domPath: first.domPath } : {}),
+        ...(first.htmlSnippet ? { htmlSnippet: first.htmlSnippet } : {}),
         ruleId: first.ruleId,
         agreement,
         issueCount: items.filter((item) => item.status === 'potential_issue')
@@ -379,12 +388,15 @@ function buildFixingPrompt(
       continue;
     }
     const findingLines = [
-      `${index + 1}. Component ${finding.componentRef} (target ${finding.targetId})`,
+      `${index + 1}. Target location`,
       `   Rule: ${finding.ruleId}`,
       `   Model result: ${finding.issueCount} of ${finding.decisiveCount} decisive assessments flagged an issue; ${finding.abstentionCount} abstained; ${finding.agreement}.`,
     ];
     if (finding.domPath) {
       findingLines.push(`   DOM path: ${finding.domPath}`);
+    }
+    if (finding.htmlSnippet) {
+      findingLines.push(`   HTML snippet: ${finding.htmlSnippet}`);
     }
     if (finding.relatedIbmIssueIds.length > 0) {
       findingLines.push(

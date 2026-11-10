@@ -30,7 +30,8 @@ function outcome(
     modelId: 'openai/gpt-oss-120b' as const,
     targetId: 'target-1',
     componentRef: 'button#save',
-    domPath: '/html/body/button',
+    domPath: '/html[1]/body[1]/button[1]',
+    htmlSnippet: '<button id="save">Save</button>',
     ruleId: 'BUTTON-PURPOSE-CLARITY',
   };
   return {
@@ -62,7 +63,7 @@ describe('aggregateAdvisoryReport', () => {
         ruleId: 'BUTTON-PURPOSE-CLARITY',
         level: 'violation',
         message: 'IBM issue is not merged.',
-        path: '/html/body/button',
+        path: '/html[1]/body[1]/button[1]',
         snippet: '<button>Save</button>',
       },
     ];
@@ -104,6 +105,21 @@ describe('aggregateAdvisoryReport', () => {
     expect(report.findings[0]?.assessments.map((assessment) => assessment.modelId))
       .toEqual([firstModel.modelId, secondModel.modelId]);
     expect(report.fixingPrompt).toContain('Evidence evidence-1: "Save"');
+    expect(report.fixingPrompt).toContain(
+      'DOM path: /html[1]/body[1]/button[1]',
+    );
+    expect(report.fixingPrompt).toContain(
+      'HTML snippet: <button id="save">Save</button>',
+    );
+    expect(report.fixingPrompt).not.toContain('target-1');
+    expect(report.assessmentGroups[0]).toMatchObject({
+      domPath: '/html[1]/body[1]/button[1]',
+      htmlSnippet: '<button id="save">Save</button>',
+    });
+    expect(report.jobs[0]).toMatchObject({
+      domPath: '/html[1]/body[1]/button[1]',
+      htmlSnippet: '<button id="save">Save</button>',
+    });
     expect(report.fixingPrompt).toContain('IBM-01');
     expect(report.fixingPrompt).toContain(
       'Do not claim conformance from these results.',
@@ -113,7 +129,7 @@ describe('aggregateAdvisoryReport', () => {
         ruleId: 'BUTTON-PURPOSE-CLARITY',
         level: 'violation',
         message: 'IBM issue is not merged.',
-        path: '/html/body/button',
+        path: '/html[1]/body[1]/button[1]',
         snippet: '<button>Save</button>',
       },
     ]);
