@@ -1,11 +1,34 @@
 # Six-Model Provider Verification
 
-**Review date:** 2026-11-09
+**Review date:** 2026-11-10
 **Evidence source:** Official Groq and Cloudflare documentation, plus
-operator-reported dashboard and documentation findings dated 2026-11-09.
+operator-reported dashboard and documentation findings dated 2026-11-09 and
+2026-11-10.
 **Scope:** Account evidence below was reported by the operator and was not
-independently accessed. Provider documentation was directly checked. No API
-calls, live inference, billing setup, or quota-consuming tests were performed.
+independently accessed. Provider documentation was directly checked. No billing
+setup was changed. Earlier probes did not complete inference. A later
+explicitly approved Cloudflare greeting phase received HTTP 200 from all three
+models and returned usage counts, but none produced a usable completed greeting.
+Subsequent probes ran against the then-configured OpenAI-compatible route, not
+the native AI Run request envelope now adopted below. Those calls are retained
+as historical provider observations but do not runtime-verify the corrected
+route or schema handling. On 2026-11-10, a new approved run sent the supplied
+HTML to all six models using the current Cloudflare AI Run format and Groq's
+strict JSON Schema format. Four returned schema-valid HTML extractions; two
+Groq GPT-OSS models initially rejected the request with HTTP 400. A subsequent
+Groq-only run with a strict-compatible schema and reasoning excluded returned
+schema-valid extractions from both. The extraction schema does not request
+accessibility findings. After the operator reconfirmed free/no-paid-path
+account status on 2026-11-10, all six models were enabled for supervised live
+assessment evaluation. Their verification status remains partial; the
+extraction probes did not test accessibility assessment accuracy. Website
+execution remains disabled until `RAC_CONTEXTUAL_AI_ENABLED=true`.
+
+Before the Cloudflare probes, the operator reported Workers Free, 10,000 of
+10,000 daily Neurons remaining, no inference usage in the prior 30 days, and no
+paid route. The operator also reconfirmed the Groq Free plan/model access and
+no paid route. After the probes, the operator reported 0/10,000 Neurons used
+and 0 Text Generation Neurons/cost; the full daily allocation remained.
 
 ## Verification dimensions
 
@@ -14,9 +37,10 @@ calls, live inference, billing setup, or quota-consuming tests were performed.
   provider accepts or successfully enforces it at runtime for that model.
 - **Account verification** records plan, allowed-model, billing, and quota
   evidence observed by the operator. It does not prove runtime connectivity.
-- **Runtime verification** requires a permitted live request. No runtime
-  verification has been performed; all six candidates remain unverified at
-  runtime and blocked in the catalog.
+- **Runtime verification** requires a permitted live request. All six models
+  have passed strict-schema HTML extraction probes, but no accessibility
+  assessment verification has been completed. The rejected Qwen request below
+  predates its later successful extraction probe.
 
 ## Status definitions
 
@@ -33,6 +57,186 @@ official catalogs/model documentation, but no candidate satisfies every
 verification item required for implementation under the strict ₹0 constraint.
 No candidate is marked unavailable, and no replacement is proposed.
 
+## Approved live attempt
+
+The operator approved one synthetic strict-schema assessment for Groq
+`qwen/qwen3.8-27b`, capped at 64 output tokens, with a 15-second timeout and no
+retries. The request used the application's assessment schema, but was sent
+directly to Groq because the normal application eligibility gate still blocks
+all candidates. The strict validator was not run because no response was
+returned. No eligibility state or production route was changed.
+
+| Record time | Candidate | Request | Result | Validation / usage | Cost evidence |
+|---|---|---|---|---|---|
+| 2026-11-09 20:25:39 +05:30 (record updated; exact dispatch time not captured) | Groq `qwen/qwen3.8-27b` | 1 synthetic assessment; 64-token cap; 15-second timeout; 0 retries | HTTP 400; provider request ID `req_01m70cwz8dej5sakfyvd6sbdgj` | Response schema validation not run; provider returned no usage; operator later reported dashboard input/output/total tokens all 0 and API call count 0. Response body was not retained. The rejection does not establish whether strict schema support is the cause. | Operator preflight expected ₹0; dashboard cost was not reported, so cost is unconfirmed. |
+| 2026-11-09 21:20:48 +05:30 | Cloudflare `@cf/zai-org/glm-4.7-flash` | 1 synthetic assessment; 64-token cap; 15-second timeout; 0 retries | HTTP 400; code `3030`; request ID `a57df9af6bddd431-MAA` | Completion usage unavailable; response body not retained; strict validation not run | Preflight: operator-reported 10,000/10,000 Neurons. Post-probe dashboard: 0 Neurons used, 0 Text Generation Neurons/cost. |
+| 2026-11-09 21:20:49 +05:30 | Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | 1 synthetic assessment; 64-token cap; 15-second timeout; 0 retries | HTTP 400; code `3030`; request ID `a57df9b2b9d5a920-MAA` | Completion usage unavailable; response body not retained; strict validation not run | Preflight: operator-reported 10,000/10,000 Neurons. Post-probe dashboard: 0 Neurons used, 0 Text Generation Neurons/cost. |
+| 2026-11-09 21:20:50 +05:30 | Cloudflare `@cf/google/gemma-4-26b-a4b-it` | 1 synthetic assessment; 64-token cap; 15-second timeout; 0 retries | HTTP 400; code `8007`; request ID `a57df9b84835d431-MAA` | Completion usage unavailable; response body not retained; strict validation not run | Preflight: operator-reported 10,000/10,000 Neurons. Post-probe dashboard: 0 Neurons used, 0 Text Generation Neurons/cost. |
+
+After the operator reported 10,000/10,000 daily free Neurons and authorized up
+to three attempts for each candidate, retry settings were changed and tested
+locally. A second synthetic test run used the actual provider adapters, the
+application schema, 200 output tokens, a 60-second timeout, sequential
+requests, and no more than three total attempts per model. The prompt requested
+a concise explanation of about 100 words. Only explicitly transient failures
+were retried. Groq GPT-OSS models each returned HTTP 400 on their first request
+and were not retried. Cloudflare models each exhausted three attempts:
+GLM/Nemotron returned code 3030; Gemma returned code 8007. The response bodies
+were not retained, and no inference completed. The operator's dashboard
+subsequently showed 0/10,000 Neurons used and 0 Text Generation Neurons/cost.
+Qwen was probed once more with the revised output cap and timeout, but again
+returned HTTP 400; no retry followed because this was non-transient. The
+production Groq adapter still fail-closes Qwen on provisional strict-schema
+support. Provider request IDs from the final attempts are recorded below.
+
+## Six-candidate status
+
+| Candidate | Documentation / schema | Account and free eligibility | Runtime result | Usage / cost evidence | Remaining blocker |
+|---|---|---|---|---|---|
+| Groq `openai/gpt-oss-120b` | Strict schema documented | Operator-reported Free/no-paid-path confirmation; exposed key rotated before follow-up | Follow-up strict-compatible extraction returned HTTP 200 and passed output-shape validation; earlier schema request returned HTTP 400 | Follow-up: 1,173 input / 365 output tokens; post-run cost not checked | Enabled for supervised assessment evaluation; assessment accuracy unverified |
+| Groq `openai/gpt-oss-20b` | Strict schema documented | Operator-reported Free/no-paid-path confirmation; exposed key rotated before follow-up | Follow-up strict-compatible extraction returned HTTP 200 and passed output-shape validation; earlier schema request returned HTTP 400 | Follow-up: 1,173 input / 240 output tokens; post-run cost not checked | Enabled for supervised assessment evaluation; assessment accuracy unverified |
+| Groq `qwen/qwen3.8-27b` | Strict-schema documentation remains contradictory | Operator-reported Free/no-paid-path confirmation | Current direct strict-schema extraction returned HTTP 200 and passed the requested output-shape validation | 1,098 input / 169 output tokens; post-run cost not checked | Enabled for supervised evaluation; document conflict and assessment accuracy remain unresolved |
+| Cloudflare `@cf/zai-org/glm-4.7-flash` | Exact model documented; not listed on JSON Mode supported-model page | Operator-reported Workers Free, no paid path, 10,000 Neurons before run | Current native AI Run extraction returned HTTP 200 and passed output-shape validation | 969 input / 214 output tokens; post-run balance/cost not checked | Enabled for supervised evaluation; assessment accuracy unverified |
+| Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | Exact model documented; planned deprecation 2026-11-20 | Operator-reported Workers Free, no paid path, 10,000 Neurons before run | Current native AI Run extraction returned HTTP 200 and passed output-shape validation | 1,248 input / 248 output tokens; post-run balance/cost not checked | Enabled for supervised evaluation; assessment accuracy unverified; recheck deprecation |
+| Cloudflare `@cf/google/gemma-4-26b-a4b-it` | Exact model documented; not listed on JSON Mode supported-model page | Operator-reported Workers Free, no paid path, 10,000 Neurons before run | Current native AI Run extraction returned HTTP 200 and passed output-shape validation | 1,276 input / 244 output tokens; post-run balance/cost not checked | Enabled for supervised evaluation; assessment accuracy unverified |
+
+| Retry-run time (local) | Candidate | Attempts | Result | Final provider request ID | Output / usage |
+|---|---|---:|---|---|---|
+| 2026-11-09 22:01:30 +05:30 | Groq `openai/gpt-oss-120b` | 1 | HTTP 400, `invalid_request_error` | `req_01m70jd2d2e0zrxc6yp84zjxz9` | No completion usage |
+| 2026-11-09 22:01:30 +05:30 | Groq `openai/gpt-oss-20b` | 1 | HTTP 400, `invalid_request_error` | `req_01m70jd2pwet388sry66dgcx46` | No completion usage |
+| 2026-11-09 22:01:33 +05:30 | Cloudflare `@cf/zai-org/glm-4.7-flash` | 3 | HTTP 400, code `3030` | `a57e355b28db7f0f-MAA` | No completion usage |
+| 2026-11-09 22:01:36 +05:30 | Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | 3 | HTTP 400, code `3030` | `a57e356e3a5e7f0f-MAA` | No completion usage |
+| 2026-11-09 22:01:39 +05:30 | Cloudflare `@cf/google/gemma-4-26b-a4b-it` | 3 | HTTP 400, code `8007` | `a57e357f294e7f0f-MAA` | No completion usage |
+| 2026-11-09 22:09:30 +05:30 (record time; exact dispatch time not captured) | Groq `qwen/qwen3.8-27b` | 1 | HTTP 400 | `req_01m70jv8gxexesz7kn8d1vj6r1` | 200-token cap; 60-second timeout; no completion usage |
+
+Cloudflare's reviewed published error reference does not list codes 3030 or
+8007. The operator reports that 3030 was capacity-related and 8007 an internal
+infrastructure error; the exact public meanings remain unconfirmed. These
+responses do not establish that the models reject JSON Schema: the error
+bodies were not retained, and no inference completed. No output was returned,
+so strict schema validation did not run. Any additional live retry requires
+fresh model-specific approval.
+
+### Cloudflare greeting connectivity phase
+
+On 2026-11-09 at 22:55 +05:30, after the operator reconfirmed Workers Free, no
+paid path, and 10,000 remaining Neurons, the explicit verification CLI sent
+one synthetic greeting request to each Cloudflare candidate. Requests were
+sequential, with at least five seconds between starts, a 32-token output cap,
+a 60-second timeout, and no retries. All three returned HTTP 200 and usage
+counts, showing the endpoint returned responses and inference usage was
+reported. The completion parser did not accept a completed greeting from any
+model; response bodies were not retained. No strict JSON Schema request or
+assessment was sent. The operator-provided preflight is not a post-run billing
+dashboard check.
+
+| Candidate | Result | Usage | Request ID |
+|---|---|---|---|
+| Cloudflare `@cf/zai-org/glm-4.7-flash` | HTTP 200; unusable completion | 23 input / 32 output tokens | `id-1794245038645` |
+| Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | HTTP 200; incomplete completion | 33 input / 32 output tokens | `id-1794245046462` |
+| Cloudflare `@cf/google/gemma-4-26b-a4b-it` | HTTP 200; unusable completion | 34 input / 32 output tokens | `id-1794245047430` |
+
+At 23:24 +05:30, a later command intended for GLM only did not honor its
+`--model` argument and sent one greeting request to each of the three models.
+This was identified after dispatch. The calls were sequential, used a 64-token
+cap, and received no retries. GLM and Nemotron returned HTTP 200 with invalid
+completion results; Gemma returned HTTP 200 with an incomplete result. A
+subsequent operator-authorized GLM-only request also reached the 64-token cap
+and exposed no message content. One further explicitly approved GLM-only
+request used a 200-token cap and returned HTTP 200/`stop`, with `Hello` and
+model reasoning text; usage was 23 input / 77 output tokens. These greeting
+calls do not establish structured-output support.
+
+### Cloudflare strict JSON Schema phase
+
+After the operator reconfirmed Workers Free, no paid path, and 9,977 remaining
+Neurons, one strict JSON Schema greeting request was sent sequentially to each
+Cloudflare candidate. The request used `strict: true`, a 512-token output cap,
+a 60-second timeout, and no retry was needed. GLM returned HTTP 200 but hit the
+token limit without a usable completion. Nemotron returned HTTP 200 and a
+completed object matching the probe schema. Gemma returned HTTP 200 but hit
+the token limit and provided no usable object. Requests were sequential with
+at least five seconds between starts. No assessment finding was requested,
+and no response other than the bounded schema output was retained.
+
+| Candidate | Result | Usage | Request ID |
+|---|---|---|---|
+| Cloudflare `@cf/zai-org/glm-4.7-flash` | HTTP 200; incomplete/invalid completion; strict schema not validated | 22 input / 512 output tokens | `id-1794247637427` |
+| Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | HTTP 200; schema-shaped completion validated: `{"greeting":"Hello!"}` | 32 input / 160 output tokens | `id-1794247640248` |
+| Cloudflare `@cf/google/gemma-4-26b-a4b-it` | HTTP 200; incomplete completion at token limit; strict schema not validated | 32 input / 512 output tokens | `id-1794247669533` |
+
+This single, flat greeting-schema probe verifies only that Nemotron returned
+one matching JSON object in this request. It does not certify general
+JSON-Schema support, the production assessment schema, assessment accuracy,
+or strict-₹0 cost. The operator-provided 9,977-Neuron preflight was
+pre-request evidence; no post-request dashboard balance or cost was reported.
+
+Before the 512-token three-model phase, one separately approved GLM strict
+schema request used a 200-token cap. It returned HTTP 200 but hit the output
+limit without a usable JSON object (29 input / 200 output tokens; request ID
+`id-1794247328882`). This is not a successful schema validation.
+
+### Six-model uploaded-HTML extraction run
+
+On 2026-11-10, after the operator authorized transmission of `D:\test-3.html`
+to all six provider endpoints and confirmed a current zero-paid-path preflight,
+one sequential run used three total attempts maximum per model, retrying only
+explicitly transient provider failures. Requests were spaced at least five
+seconds apart and capped at 512 output tokens. No retries were triggered.
+Cloudflare requests used native `/ai/run`, nested `input`, `enable_thinking:
+false`, temperature `0.3`, and inline strict JSON Schema. Groq requests used
+its strict Chat Completions schema format. The requested schema extracted page
+title, meta description, headings, links, and paragraphs; it deliberately did
+not ask models to diagnose accessibility.
+
+| Provider / model | Result | Usage (input / output) | Request ID |
+|---|---|---:|---|
+| Groq `openai/gpt-oss-120b` | HTTP 400 `json_validate_failed`; no retry (permanent request rejection) | Not returned | `a582c7215cadd089-BOM` |
+| Groq `openai/gpt-oss-20b` | HTTP 400 `json_validate_failed`; no retry (permanent request rejection) | Not returned | `a582c73e78d6d089-BOM` |
+| Groq `qwen/qwen3.8-27b` | HTTP 200; output passed shape validation | 1,098 / 169 tokens | `chatcmpl-7aedd55a-70c1-4979-805e-634b86b8cbe0` |
+| Cloudflare `@cf/zai-org/glm-4.7-flash` | HTTP 200; output passed shape validation | 969 / 214 tokens | `chatcmpl-97aad95c8fcad5e8` |
+| Cloudflare `@cf/nvidia/nemotron-3-120b-a12b` | HTTP 200; output passed shape validation | 1,248 / 248 tokens | `chatcmpl-b2f7b9cc35a58822` |
+| Cloudflare `@cf/google/gemma-4-26b-a4b-it` | HTTP 200; output passed shape validation | 1,276 / 244 tokens | `ed9fedac4dd9461fa8f8c7690f3e498f` |
+
+The four successful outputs agreed on the title (`Accessible Web Page
+Example`), an empty description (no meta description is present), four
+headings, and the W3C link. Paragraph serialization differed: Groq Qwen
+decoded entities to text, Cloudflare Nemotron retained inline `<abbr>` and
+`<a>` markup in paragraph strings, and GLM retained `&copy;` in the footer.
+These are extraction outputs, not an accessibility audit or a merged report.
+The two GPT-OSS HTTP 400 responses did not include usage. The operator's
+10,000-Neuron balance was pre-run evidence; no post-run account usage or cost
+was independently checked. At the time of this extraction run, model eligibility
+for production contextual assessment remained blocked; the later operator
+enablement is for supervised evaluation only and does not mark assessments
+verified.
+
+### Groq GPT-OSS strict-schema follow-up
+
+After the operator confirmed the exposed Groq key had been rotated and
+replaced, and reconfirmed there was no paid billing path, one request was sent
+to each previously rejected model, sequentially, with a five-second pause
+between calls. This corrected the strict schema by marking all fields required
+and setting `additionalProperties: false` on the root and nested objects.
+Requests used `include_reasoning: false`, `reasoning_effort: "low"`,
+`max_completion_tokens: 512`, and a 45-second client timeout. The prompt asked
+for at most 100 words; the operator explicitly accepted longer answers if
+returned. Both outputs were 62 words and passed local output-shape validation.
+The response content contained only the JSON answer (the API request excluded
+the reasoning field); this does not assert that the models performed no
+internal reasoning.
+
+| Model | Result | Usage (input / output) | Request ID | Elapsed |
+|---|---|---:|---|---:|
+| Groq `openai/gpt-oss-120b` | HTTP 200; `stop`; strict JSON shape valid; 62 words | 1,173 / 365 tokens | `req_01m72155wae69a7p2p46kez957` | 1.596 s |
+| Groq `openai/gpt-oss-20b` | HTTP 200; `stop`; strict JSON shape valid; 62 words | 1,173 / 240 tokens | `req_01m7215c4wexesetfv85dedh7a` | 1.440 s |
+
+Both produced the same extraction: title “Accessible Web Page Example,” an
+empty meta description, four headings, the W3C link, and three paragraph
+strings. These calls verify successful strict-schema extraction for these
+requests, not accessibility assessment accuracy or production readiness. No
+post-call billing dashboard was checked, and model eligibility remains blocked.
+
 ## Groq
 
 ### Provider-level findings
@@ -43,13 +247,10 @@ No candidate is marked unavailable, and no replacement is proposed.
   key as a bearer credential. The model pages show the exact IDs in direct
   Chat Completions examples.
 - **Structured output — Documented for GPT-OSS 120B/20B; provisional for
-  Qwen 3.8 27B:** The Structured Outputs page's supported-model lists name all
-  three IDs for both strict and best-effort modes. Its later “Choosing Between
-  Strict and Best-effort Mode” table says strict mode is limited to GPT-OSS
-  20B and 120B. The operator reports the conclusion that all three models
-  support both modes and provisionally accepts Qwen for implementation
-  testing. This project-level decision does not remove the public-doc conflict
-  or constitute runtime verification; Qwen strict support remains provisional.
+  Qwen 3.8 27B:** The Structured Outputs page's supported-model list names all
+  three IDs for strict mode, but its later “Choosing Between Strict and
+  Best-effort Mode” table says strict mode is limited to GPT-OSS 20B and 120B.
+  The current page therefore remains internally contradictory for Qwen.
   Strict mode uses
   `response_format: { type: "json_schema", json_schema: { name, strict: true,
   schema } }`. Strict schemas require every field in `required` and
@@ -95,7 +296,7 @@ application output cap is 2,048 tokens; it is not the model maximum.
 |---|---|---|---|---|---|---|
 | GPT-OSS-120B | `openai/gpt-oss-120b` | 131,072 / unconfirmed / 65,536 | $0.15 input; $0.60 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
 | GPT-OSS-20B | `openai/gpt-oss-20b` | 131,072 / unconfirmed / 65,536 | $0.075 input; $0.30 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Strict and best-effort listed | **Partially verified** — runtime compatibility untested |
-| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Operator reports both modes supported; public strict-support conflict remains | **Partially verified** — runtime compatibility untested |
+| Qwen 3.8-27B | `qwen/qwen3.8-27b` | 131,072 / unconfirmed / 16,384 | $0.80 input; $4.00 output | 2,048 | 30 / 1,000 / 8,000 / 200,000 | Current page lists strict support but contradicts itself later; strict support remains provisional | **Partially verified** — runtime compatibility untested |
 
 Qwen's model page lists text and image input, with up to three input images.
 Images are not needed for the current text-evidence task.
@@ -126,14 +327,17 @@ assess legal compatibility.
 
 ### Provider-level findings
 
-- **API and authentication — Verified:** The native REST endpoint is
-  `POST /client/v4/accounts/{account_id}/ai/run/{model_id}`. The model pages
-  document chat `messages`; Cloudflare also documents the OpenAI-compatible
-  Chat Completions endpoint at
-  `/client/v4/accounts/{account_id}/ai/v1/chat/completions`. Requests require
-  an account ID and API token with Workers AI permissions.
+- **API and authentication:** The operator supplied the request contract now
+  used by this application: `POST /client/v4/accounts/{account_id}/ai/run`,
+  top-level `model`, and nested `input` containing `messages`,
+  `chat_template_kwargs`, `response_format`, `temperature`, and `max_tokens`.
+  The response text is read from `result.choices[0].message.content`.
+  Authentication uses an account ID and an API token with Workers AI
+  permissions. The adapter and diagnostic probe use this contract. The
+  current endpoint/request shape has not yet been live-verified.
 - **Response metadata — Verified:** The synchronous model output schemas
-  describe completion IDs, `choices`, `finish_reason`, and usage fields
+  describe an AI Run result envelope with completion data under `result`,
+  including `result.choices`, `finish_reason`, and usage fields
   (`prompt_tokens`, `completion_tokens`, `total_tokens`). Documented finish
   reasons include `stop`, `length`, `tool_calls`, `content_filter`, and
   `function_call`. Treat `length` and other non-normal completion reasons as
@@ -141,13 +345,16 @@ assess legal compatibility.
 - **JSON/JSON Schema — Parameter documented; exact-model support provisional:**
   Each exact model's synchronous input schema documents `response_format`
   choices including `json_object` and `json_schema`, and a `strict` boolean
-  field under `json_schema`. `max_tokens` and `max_completion_tokens` are also
-  documented request parameters. The operator proposes provisionally treating
+  field under `json_schema`. The AI Run request uses `max_tokens` under `input`.
+  The operator proposes provisionally treating
   model JSON/JSON Schema support as available for implementation testing.
   However, the JSON Mode supported-model list omits all three candidates and
   Cloudflare warns it cannot guarantee schema adherence in every case.
   Therefore exact-model JSON/JSON Schema and strict-schema support remain
   provisional and require testing against the application's actual schema.
+  The historical Cloudflare runtime probes used the former Chat Completions
+  route and envelope. In particular, the prior Nemotron greeting-schema success
+  does not validate the current native AI Run endpoint.
 - **Free allocation — Documentation and account evidence verified:** The
   operator reports a Workers Free ($0) account, Workers Paid inactive, no
   payment method, no custom AI Gateway, no AI Gateway credits, and 0 Neurons
@@ -202,11 +409,11 @@ Cloudflare currently lists Nemotron 3 120B for planned deprecation on
 renewed provider verification and operator approval; do not silently substitute
 another model.
 
-For each exact model schema, `max_tokens` and
-`max_completion_tokens` exist as nullable integer request parameters. This
-documents how to request a limit. The numeric output maxima above come from
-the operator's manual documentation review and have not been independently
-verified against a provider source by this review. Context-window size,
+For AI Run, the operator-supplied request uses `input.max_tokens`; the former
+OpenAI-compatible route used `max_completion_tokens`. The numeric output
+maxima above come from the operator's manual documentation review and have
+not been independently verified against a provider source by this review.
+Context-window size,
 maximum input tokens, and maximum output tokens are tracked separately.
 Maximum input remains unconfirmed. The planned 2,048-token application cap is
 an application setting, not a provider-imposed model maximum.
@@ -256,48 +463,56 @@ The exact model pages document these additional capabilities:
 The Cloudflare JSON Mode page's current supported-model list does not include
 GLM-4.7-Flash, Nemotron 3 120B, or Gemma 4 26B A4B IT. Their request schemas
 accepting generic `response_format`/`json_schema` parameters do not establish
-support for those exact models. A Cloudflare adapter now constructs the
-documented JSON Schema request for isolated mocked tests and rejects malformed
-or non-JSON responses; it is not connected to the assessment pipeline.
-Exact-model schema support, schema conformance, authentication, and usage
-remain untested at runtime. All Cloudflare models remain blocked.
+general support for those exact models. However, the approved native AI Run
+HTML-extraction probes for all three returned schema-valid JSON. This confirms
+the tested request path and extraction schema only; it does not verify the
+production assessment schema, accessibility accuracy, or ongoing provider
+availability. All three are operator-enabled for supervised evaluation and
+remain partially verified.
 
 ## Integration decision
 
-1. **Cloudflare provider client implementation is complete behind the blocked
-   eligibility gate.** Do not enable a candidate or send live requests until
-   the account owner authorizes controlled runtime schema checks under the ₹0
-   account constraints. The adapter has no assessment or quota-ledger
-   integration.
-2. **Groq account billing is reported zero-cost eligible.** The operator
-   confirmed Free plan, Allowed Models, organization limits, no payment method,
-   no purchased credits, and no auto-recharge. The models remain blocked pending
-   implementation and runtime compatibility checks. The operator provisionally
-   accepts Qwen strict support for implementation testing, but the public-doc
-   conflict and runtime behavior remain unresolved.
-3. **Cloudflare account eligibility is verified at the account/billing level
-   only** based on operator-reported dashboard facts and public pricing/model
-   documentation. The catalog records `zero_cost_eligible` for the three exact
-   models while retaining overall `partially_verified`, `blocked_unverified`,
-   and operator-disabled states. The shared free allowance is limited and
-   resets daily; future clients need an explicit fail-closed quota stop.
-   Cloudflare candidates remain partially verified because maximum input
-   tokens are unknown and exact-model JSON/JSON Schema compatibility has not
-   been runtime tested. Output maxima are recorded as operator-reported docs
-   findings; the project intends to cap each request at 2,048 output tokens.
+1. **Provider clients and supervised evaluation are enabled.** All six
+   candidates are operator-enabled for supervised assessment evaluation,
+   based on operator-reported free/no-paid-path account status and successful
+   extraction probes. Their verification and runtime statuses intentionally
+   remain `partially_verified`; extraction did not establish accessibility
+   assessment accuracy. Keep the separate `RAC_CONTEXTUAL_AI_ENABLED` server
+   opt-in off until a live assessment run is explicitly authorized.
+2. **Groq account status is operator-reported zero-cost eligible.** The
+   operator confirmed Free plan and no paid path. Groq strict-schema
+   extraction succeeded for all three models, but the public documentation
+   remains internally contradictory about Qwen support. Review assessment
+   results against known cases before treating any model as accurate.
+3. **Cloudflare account status is operator-reported at the account/billing
+   level.** Extraction probes succeeded for all three exact model IDs, but
+   Cloudflare's JSON Mode supported-model list omits these models and schema
+   conformance is not guaranteed. The shared free allowance is limited and
+   resets daily; the application quota guard is not integrated. Recheck the
+   account balance and availability before each approved live run. Maximum
+   input tokens remain unknown; output limits and the 2,048-token application
+   cap are recorded in the catalog.
 4. **No replacements are recommended.** If strict structured-output
    compatibility cannot be established, stop and request human approval of
    any revised shortlist. Do not silently substitute models, providers,
    routes, or paid options.
-5. **No live behavior is verified.** Public documentation review does not
-   establish successful authentication, account entitlement, model response
-   quality, or runtime compatibility.
+5. **No candidate is assessment-verified.** The extraction probes establish
+   only bounded request/response compatibility for the tested extraction
+   prompts. They do not prove accessibility assessment quality, strict
+   compliance with the production assessment schema, or zero cost after each
+   run.
 
 ## Retrieval and verification notes
 
 - Public documentation and operator-reported account and model-limit facts
-  were reviewed on 2026-11-09. Provider catalogues, pricing, limits, account
-  status, and terms can change; recheck first-party sources and account
-  dashboards before implementation or live testing.
-- No live API or inference test was performed, and the assessment pipeline was
-  not changed.
+  were reviewed and the account preflight was reconfirmed by the operator on
+  2026-11-09. The operator-reported Cloudflare balance was 10,000 of 10,000
+  Neurons before the initial probes; after those probes the operator reported
+  0/10,000 Neurons used and 0 Text Generation Neurons/cost. After the retry
+  run, the operator again reported 0/10,000 Neurons used and no cost.
+  Recheck first-party sources and dashboards before any future live step.
+- The approved live Qwen request, initial Cloudflare probes, and retry run are
+  recorded above. No further calls were made. Production retry defaults,
+  provider error classification, contextual timeout, and supervised-evaluation
+  eligibility were subsequently changed. The assessment opt-in remains off;
+  no provider requests were made as part of those code changes.

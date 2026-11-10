@@ -11,19 +11,17 @@ Replace the active single-selected-model assessment path with a persistent,
 bounded job system behind two direct provider adapters. Keep IBM Equal Access
 independent and authoritative; keep model assessments advisory and separate.
 Reuse the current V2 HTML extraction and evidence types. The system should be
-able to schedule six model assessments concurrently, but model eligibility is
-per-model and fail-closed.
+able to schedule model assessments sequentially, with no overlapping provider
+requests, but model eligibility is per-model and fail-closed.
 
-**Do not enable any candidate yet.** The operator reports Groq Free account
-access to all three listed models without a payment method, purchased credits,
-or auto-recharge, and a Workers Free account with a shared 10,000-Neuron daily
-allocation. These are account-level findings, not runtime verification.
-Groq's public strict-schema documentation is internally inconsistent for
-Qwen; the operator's review provisionally accepts its supported-model listing
-for implementation testing. Cloudflare's exact-model JSON/JSON Schema
-compatibility and the accessibility result schema remain untested. All six
-models remain blocked and operator-disabled pending the remaining verification
-gates. No live requests are claimed here.
+All six models are operator-enabled for supervised live assessment evaluation.
+Their overall/runtime verification status remains `partially_verified`:
+strict-schema extraction passed, but accessibility assessment behavior has not
+been tested. The operator reconfirmed Groq Free access with no paid route and
+Workers Free with no paid route; these are operator-reported account facts.
+Groq's strict-schema documentation remains internally inconsistent for Qwen,
+and Cloudflare says schema conformance is not guaranteed. Keep the contextual
+AI server opt-in off until the operator is ready to run the known-case tests.
 
 The approved durable batch/job store is a local SQLite database using Node.js
 24.11.0+ built-in `node:sqlite` (`DatabaseSync`). It coexists with the existing
@@ -36,10 +34,10 @@ file. The JSON ledger continues to serve the legacy usage endpoint separately.
 |---|---|---|
 | IBM | `checker.ts` runs IBM Equal Access and returns its findings/counts. Tests protect those results when contextual analysis fails. | Keep the IBM pipeline, output shape, rules, severity, and counts unchanged. |
 | Extraction | The production route accepts one HTML file and uses V2 extraction/adaptation. A separate utility accepts caller-supplied HTML documents. | Reuse current extraction. Add a future source adapter for React projects/URLs; do not claim it exists now. |
-| AI execution | Legacy selected-model execution has been retired. Mock-tested provider adapters and a bounded scheduler module exist, but contextual AI remains disabled and no request path invokes them. The six-entry benchmark is serial. | Independently configured Groq and Cloudflare model adapters, scheduled as bounded jobs. |
+| AI execution | All six candidates are operator-enabled for supervised assessment evaluation and remain partially verified. HTML-extraction probes returned schema-valid output; accessibility assessment behavior is unverified. The contextual AI server opt-in remains disabled by default. | Independently configured Groq and Cloudflare model adapters, scheduled as sequential bounded jobs. |
 | Rules | Three contextual rules are active. Twenty rule definitions are proposed, not implemented as a complete assessment set. | Keep a versioned rule registry; only schedule rules with reviewed definitions and available evidence. |
 | Persistence | `backend/src/ai/usage.ts` stores historical metrics in a JSON file. Prompt 09 adds a separate SQLite batch/job ledger; no usage migration is performed. | Keep job idempotency and attempts in SQLite; preserve the JSON usage endpoint unchanged unless a separately approved migration is undertaken. |
-| Verification | Provider documentation and operator-reported account evidence are recorded in the verification report. No candidate has runtime verification. | Require fail-closed eligibility and separate documentation, account, and runtime evidence. Local tests use mocks only. |
+| Verification | Provider documentation and operator-reported account evidence are recorded in the verification report. Extraction requests have runtime evidence; production contextual assessment does not. | Require fail-closed eligibility and separate documentation, account, and assessment-runtime evidence. Local tests use mocks only. |
 
 ## 1. Request flow and protected boundary
 
@@ -56,10 +54,11 @@ file. The JSON ledger continues to serve the legacy usage endpoint separately.
    expected job count, per-request token bounds, and provider pacing. Record a
    batch even when some candidates are blocked, so the report can distinguish
    skipped work from a successful negative assessment.
-4. **Job scheduling:** Create one independently idempotent job for each
-   model-target-rule assignment. This keeps validation and retries scoped to a
-   single rule. The planned request count is:
-   `eligible targets × eligible rules × enabled models`.
+4. **Job scheduling:** For contextual assessment, assign each eligible target
+   to one model in deterministic round-robin order. Create one independently
+   idempotent job for that target/model/rule; do not assess each target with
+   every model. Additional targets cycle through the eligible model list.
+   Generic scheduler callers may explicitly request multi-model assessment.
 5. **Provider call:** A provider-specific adapter builds the exact request,
    records an attempt before network I/O, enforces its own timeout/rate limit,
    and returns normalized transport metadata plus the provider response.
@@ -84,10 +83,12 @@ Use two server-only clients:
 
 - **Groq:** OpenAI-compatible Chat Completions endpoint. Read
   `GROQ_API_KEY` from the backend environment.
-- **Cloudflare Workers AI:** account-scoped REST or documented
-  OpenAI-compatible endpoint, chosen per exact model and verified capabilities.
-  Read `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` from the backend
-  environment.
+- **Cloudflare Workers AI:** account-scoped native AI Run endpoint
+  `POST /client/v4/accounts/{account_id}/ai/run`. Put the model ID at the
+  request root and its messages, chat-template options, response format,
+  temperature, and token limit under `input`. Read `CLOUDFLARE_ACCOUNT_ID` and
+  `CLOUDFLARE_API_TOKEN` from the backend environment. Parse generated content
+  from `result.choices[0].message.content`.
 
 The analysis integration is disabled by default. Set
 `RAC_CONTEXTUAL_AI_ENABLED=true` in the backend environment only after separate
@@ -125,12 +126,12 @@ verification must be distinguishable in the record.
 
 | Candidate | Current evidence | Initial eligibility |
 |---|---|---|
-| `openai/gpt-oss-120b` | Operator reports Free-plan access, exact model allowed, no payment method/credits/auto-recharge, and account limits; runtime compatibility remains untested. | `blocked_unverified` until implementation and runtime checks are approved. |
-| `openai/gpt-oss-20b` | Same operator-reported Free-plan and organization-limit evidence; runtime compatibility remains untested. | `blocked_unverified` until implementation and runtime checks are approved. |
-| `qwen/qwen3.8-27b` | Same account evidence. Operator provisionally accepts strict and best-effort support for implementation testing; Groq's public strict-support documentation remains contradictory. | `blocked_unverified` until the documentation conflict/runtime check and implementation gates are resolved. |
-| `@cf/zai-org/glm-4.7-flash` | Operator reports Workers Free, no paid billing route, and the shared 10,000-Neuron daily allocation. Exact-model JSON Schema behavior remains untested; output max is operator-reported as 4,096. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
-| `@cf/nvidia/nemotron-3-120b-a12b` | Same operator-reported Workers Free evidence; exact-model JSON Schema behavior remains untested; output max is operator-reported as 16,384. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
-| `@cf/google/gemma-4-26b-a4b-it` | Same operator-reported Workers Free evidence; exact-model JSON Schema behavior remains untested; output max is operator-reported as 8,192. | `blocked_unverified` until exact schema compatibility and implementation gates are verified. |
+| `openai/gpt-oss-120b` | Strict-schema extraction passed; operator-reported Free/no-paid-path account. Assessment accuracy untested. | `eligible` for supervised live evaluation; remains partially verified. |
+| `openai/gpt-oss-20b` | Strict-schema extraction passed; same operator-reported account evidence. Assessment accuracy untested. | `eligible` for supervised live evaluation; remains partially verified. |
+| `qwen/qwen3.8-27b` | Strict-schema extraction passed; Groq strict-support documentation conflict remains. | `eligible` for supervised live evaluation; remains partially verified. |
+| `@cf/zai-org/glm-4.7-flash` | Strict-schema extraction passed; operator-reported Workers Free/no-paid-path account. | `eligible` for supervised live evaluation; remains partially verified. |
+| `@cf/nvidia/nemotron-3-120b-a12b` | Strict-schema extraction passed; same operator-reported account; output maximum is operator-reported as 16,384. | `eligible` for supervised live evaluation; remains partially verified. |
+| `@cf/google/gemma-4-26b-a4b-it` | Strict-schema extraction passed; same operator-reported account; output maximum is operator-reported as 8,192. | `eligible` for supervised live evaluation; remains partially verified. |
 
 The Cloudflare free allocation is shared across the account, not six separate
 model quotas. The Groq Developer-plan rate table is not evidence of free-tier
@@ -139,22 +140,31 @@ Recheck official documentation and account dashboards before each implementation
 gate; changes to eligibility require explicit operator configuration, never
 automatic substitution.
 
-**Prompt 06 configuration state:** `backend/src/ai/config.ts` records the six
-official candidate IDs as metadata only. Every candidate is
-`blocked_unverified`, operator-disabled, and excluded from
-`getEligibleModels()` because none has complete documentation, account, and
-runtime evidence for the configured strict structured-output requirement.
-Groq account eligibility and per-model limits are operator-reported; its Qwen
-strict capability remains provisional because of the public documentation
-conflict. Cloudflare account eligibility is operator-reported within the
-shared daily free allocation. Its reported output maxima are 4,096 (GLM),
+**Prompt 06 configuration state:** All six candidates are operator-enabled
+for live evaluation and included in `getEligibleModels()`. Their verification
+statuses intentionally remain `partially_verified`, and readiness reasons
+state that assessment accuracy remains unverified. Groq account eligibility
+and per-model limits are operator-reported; its Qwen strict capability remains
+provisional because of the public documentation conflict. Cloudflare account
+eligibility is operator-reported within the shared daily free allocation.
+Its reported output maxima are 4,096 (GLM),
 16,384 (Nemotron), and 8,192 (Gemma), with a 2,048-token application cap;
 maximum input remains unknown. Exact-model Cloudflare JSON/JSON Schema
 behavior remains provisional. Per-model Cloudflare request/token limits remain
 unset. Published provider limits are scoped separately from account
-entitlements. Application concurrency safeguards are 1 per model, 3 per
-provider, and 6 total. The provider adapters are implemented but isolated;
-there is no live check or assessment-pipeline integration.
+entitlements. Application concurrency safeguards are 1 per model, 1 per
+provider, and 1 total, with a five-second minimum interval between Cloudflare
+request starts. Groq Chat Completions excludes reasoning from the returned
+message; Cloudflare uses the native AI Run envelope and disables template
+thinking. An explicit `backend/scripts/cloudflare-model-verification.ts`
+CLI supports separately confirmed greeting and strict-JSON diagnostic phases;
+it requires current Workers Free/no-paid-path confirmation and does not change
+model eligibility. The strict phase uses the application's 512-token default
+and requires confirmation that the greeting phase returned HTTP 200 for the
+selected models. Each model is processed sequentially with at least five
+seconds between request starts and at most three total attempts, retrying only
+explicitly transient provider failures. Timeouts, malformed/incomplete
+responses, and schema validation failures are not retried.
 
 ## 3. Snapshot, batch, and assessment job contracts
 
@@ -181,7 +191,7 @@ target_id, rule_id, context_hash, evidence_ref_ids, request_payload_hash,
 prompt_version, schema_version, status, created_at, started_at, completed_at
 ```
 
-Each job evaluates one model, one target, and one rule. Its result has
+Each contextual job evaluates one assigned model, one target, and one rule. Its result has
 `rule_id`, `target_id`, one allowed assessment status, a short explanation,
 evidence references, optional model-reported confidence, and the producing
 provider/model. This intentionally yields more small requests than a multi-rule
@@ -320,14 +330,12 @@ documents one.
 ## 6. Bounded scheduler, rate control, and retry policy
 
 Use a persistent queue with a fixed number of async workers, not an unbounded
-`Promise.all`. Proposed initial application limits are **one active request
-per model**, **three active requests per provider**, and **six total**. This
-allows one request to each candidate at once while bounding resources. These
-are conservative application settings, not claims about provider concurrency
-allowances; lower them to match account-visible limits or observed capacity.
-Raise them only after approved testing. Schedule fairly across batches so one
-large project cannot monopolize all workers. Cancellation stops new dispatches
-and marks unfinished work accurately; it does not erase attempts.
+`Promise.all`. Application limits are **one active request total** (also one
+per provider and per model), so even requests from separate runs sharing the
+ledger do not overlap. This is a conservative application setting, not a
+provider concurrency guarantee. Cloudflare requests also have a five-second
+minimum interval between starts. Cancellation stops new dispatches and marks
+unfinished work accurately; it does not erase attempts.
 
 Rate-limit settings come from the provider account dashboard where available,
 then are enforced separately per provider/model using a rolling window and
@@ -390,7 +398,10 @@ output cap, and response format/schema. It rejects requests that exceed the
 verified context/input or application output cap before creating a job. The
 default limits are six total requests, three per provider, and one per model,
 with round-robin batch dispatch, a 300-job queue cap, a 120-second
-request-timeout ceiling, and two total attempts. A runnable job from another
+request-timeout ceiling, and three total attempts (one initial attempt plus
+up to two retries). Cloudflare request starts, including retries, are spaced by
+at least five seconds across the provider to avoid bursting the three models
+together; Groq pacing is unchanged. A runnable job from another
 batch gets dispatch priority before the scheduler returns to a batch with
 queued work. `Retry-After` is honored as supplied; exponential backoff is
 bounded when the provider gives no delay.
@@ -406,7 +417,11 @@ distributed or cross-host budget lock, and other dashboard/API consumers of
 the same provider allocation are not visible to it.
 
 Only explicit rate-limit and provider-unavailable errors marked retryable are
-retried, with bounded attempts and `Retry-After`. Timeouts, disconnects,
+retried, with bounded attempts and `Retry-After`. Cloudflare codes `3030` and
+`8007` are currently mapped to retryable unavailable based on the operator's
+reported account diagnostics; their meanings are not listed in the reviewed
+public error reference and should be revalidated against first-party evidence.
+Timeouts, disconnects,
 cancellation after dispatch, and unknown adapter failures are persisted as
 `unknown_outcome`; they are not resent automatically. Quota exhaustion pauses
 that provider for the run, while billing/deprecation failures pause only the
@@ -414,12 +429,14 @@ affected model. Successful JSON is validated by the ledger against the
 assessment schema, job identity, permitted rules, and evidence references
 before persistence.
 
-All six catalog entries are currently blocked and operator-disabled.
-Consequently, a normal scheduler run records zero planned model jobs, reports
-each blocked candidate, and makes no adapter calls. No provider request,
-runtime verification, startup recovery, or scheduler/API integration was
-performed for Prompt 10. The shared Neuron guard is implemented for scheduler
-dispatch but does not account for usage outside this application.
+At the Prompt 10 checkpoint, all six catalog entries were blocked and
+operator-disabled. Subsequent extraction probes verified strict-schema output
+for all six, but did not exercise the production accessibility assessment
+schema. The operator has now approved all six for supervised assessment
+evaluation; `RAC_CONTEXTUAL_AI_ENABLED` remains `false`, so upload processing
+still does not dispatch provider calls until that separate opt-in is changed.
+The shared Neuron guard is implemented for scheduler dispatch but does not
+account for usage outside this application.
 
 ## 7. Provider adapters and common assessment validation
 
@@ -431,9 +448,12 @@ provider request ID, error classification, rate-limit headers, and
 Require model-specific configuration for JSON/JSON Schema output. Groq's
 documented strict schema support may be used for the listed models after the
 exact request shape is tested with mocks. Cloudflare candidates stay blocked
-until their exact model/endpoint output behavior is verified; do not infer
-support from provider-wide JSON Mode documentation. Regardless of provider
-constraints, server-side validation is mandatory.
+for production until accessibility assessment behavior is verified; do not
+infer assessment readiness from a successful extraction response or provider-
+wide JSON Mode documentation. Groq sends `include_reasoning: false` and
+`reasoning_effort: "low"`. Cloudflare sends `chat_template_kwargs:
+{ "enable_thinking": false }` inside its native AI Run `input`. Regardless of
+provider constraints, server-side validation is mandatory.
 
 Common validated assessment:
 
@@ -442,7 +462,7 @@ Common validated assessment:
   "targetId": "target-id",
   "ruleId": "RULE-ID",
   "status": "potential_issue",
-  "explanation": "Short, evidence-grounded explanation.",
+  "explanation": "Violation: Short, evidence-grounded explanation.",
   "evidenceRefs": ["evidence-id"],
   "providerId": "provider-id",
   "modelId": "exact-model-id"
@@ -464,6 +484,11 @@ extra contract fields, and check JSON syntax, field types, schema version,
 allowed status, target/rule/provider/model identity, evidence references
 against the exact context sent, and finish status. Treat
 truncation/length finish reasons and empty candidate lists as incomplete.
+Require explanation prefixes to match the status: `Violation:`, `Not
+violation:`, or `Insufficient context:`. Keep explanations concise and grounded
+in the supplied evidence, identify the concrete supplied text/attribute, and
+limit them to 50 words; do not redirect to IBM, generic websites, or other
+external resources.
 Persist malformed JSON, schema-invalid output, semantic-invalid output,
 oversized output, unsupported finish reasons, and provider-malformed responses
 as distinct invalid-response error classes. Do not accept extra or fabricated

@@ -411,9 +411,11 @@ function getIssueCategory(level: string): string {
 function formatStatus(status: string): string {
   switch (status) {
     case 'unanimous_issue':
-      return 'All validated assessments flagged an issue'
+      return 'Potential violation'
     case 'unanimous_no_issue':
-      return 'All validated assessments found no issue'
+      return 'No issue detected'
+    case 'disagreement':
+      return 'Disagreement'
     case 'insufficient_context':
       return 'Insufficient context (abstention)'
     case 'potential_issue':
