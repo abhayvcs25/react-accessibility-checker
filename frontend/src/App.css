@@ -926,3 +926,119 @@
     animation: none;
   }
 }
+
+/* Mode Selector */
+.mode-selector {
+  display: inline-flex;
+  gap: var(--design-space-2);
+  margin-bottom: var(--design-space-6);
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface-subtle);
+  padding: var(--design-space-1);
+}
+
+.mode-btn {
+  border: var(--design-border-width) solid transparent;
+  background: transparent;
+  color: var(--design-color-ink);
+  font-family: var(--design-font-sans);
+  font-size: 13px;
+  font-weight: 700;
+  padding: var(--design-space-2) var(--design-space-4);
+  cursor: pointer;
+}
+
+.mode-btn:hover {
+  background: var(--design-color-surface);
+}
+
+.mode-btn-active {
+  background: var(--design-color-surface);
+  border-color: var(--design-color-border);
+  box-shadow: var(--design-shadow-hard);
+}
+
+.mode-btn:focus-visible {
+  outline: 2px solid var(--design-color-focus);
+  outline-offset: 2px;
+}
+
+/* Source Notice Banner */
+.source-notice-banner {
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface-subtle);
+  padding: var(--design-space-4);
+  margin-bottom: var(--design-space-6);
+  box-shadow: var(--design-shadow-hard);
+}
+
+.source-notice-banner strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: var(--design-space-1);
+}
+
+.source-notice-banner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--design-color-muted);
+  line-height: 1.5;
+}
+
+/* Target Kind Badges */
+.kind-badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--design-space-2);
+  margin: var(--design-space-3) 0 var(--design-space-6);
+}
+
+.kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--design-space-1);
+  padding: var(--design-space-1) var(--design-space-3);
+  border: 1px solid var(--design-color-border);
+  background: var(--design-color-surface);
+  font-family: var(--design-font-mono);
+  font-size: 12px;
+}
+
+.kind-badge strong {
+  font-weight: 700;
+}
+
+/* Rule Coverage Details */
+.rule-coverage-details {
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface);
+  margin-bottom: var(--design-space-6);
+  padding: var(--design-space-4);
+}
+
+.rule-coverage-details summary {
+  font-weight: 750;
+  cursor: pointer;
+  padding: var(--design-space-2) 0;
+}
+
+.rule-coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--design-space-4);
+  font-size: 13px;
+}
+
+.rule-coverage-table th,
+.rule-coverage-table td {
+  border: 1px solid var(--design-color-border);
+  padding: var(--design-space-2) var(--design-space-3);
+  text-align: left;
+}
+
+.rule-coverage-table th {
+  background: var(--design-color-surface-subtle);
+  font-weight: 750;
+}

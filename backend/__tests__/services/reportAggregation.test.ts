@@ -135,6 +135,42 @@ describe('aggregateAdvisoryReport', () => {
     ]);
   });
 
+  it('keeps React source excerpts distinct from HTML snippets in reports and fixing prompts', () => {
+    const report = aggregateAdvisoryReport(
+      [firstModel],
+      [
+        outcome({
+          sourceExcerpt: '<button>{label}</button>',
+          sourceLanguage: 'tsx',
+          sourceLocation: {
+            file: 'SaveButton.tsx',
+            startLine: 4,
+            startColumn: 2,
+            endLine: 4,
+            endColumn: 27,
+          },
+        }),
+      ],
+      [],
+    );
+
+    expect(report.assessmentGroups[0]).toMatchObject({
+      sourceExcerpt: '<button>{label}</button>',
+      sourceLanguage: 'tsx',
+      sourceLocation: { file: 'SaveButton.tsx', startLine: 4 },
+    });
+    expect(report.jobs[0]).toMatchObject({
+      sourceExcerpt: '<button>{label}</button>',
+      sourceLanguage: 'tsx',
+    });
+    expect(report.fixingPrompt).toContain(
+      'TSX excerpt: <button>{label}</button>',
+    );
+    expect(report.fixingPrompt).toContain(
+      'HTML snippet: <button id="save">Save</button>',
+    );
+  });
+
   it('shows disagreement without turning the majority into a verdict', () => {
     const report = aggregateAdvisoryReport(
       [firstModel, secondModel],

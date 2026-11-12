@@ -156,7 +156,25 @@ export interface AnalyzeSummary {
 export type ContextualAssessmentRuleId =
   | 'BUTTON-PURPOSE-CLARITY'
   | 'FORM-LABEL-RELEVANCE'
-  | 'ARIA-NAME-CLARITY';
+  | 'ARIA-NAME-CLARITY'
+  // React source analysis rules (added for single-file stage)
+  | 'IMG-ALT-RELEVANCE'
+  | 'IMG-ALT-CLARITY'
+  | 'IMG-ALT-REDUNDANCY'
+  | 'BUTTON-NAME-AMBIGUITY'
+  | 'BUTTON-ACTION-CONSISTENCY'
+  | 'LINK-PURPOSE-CLARITY'
+  | 'LINK-GENERIC-TEXT'
+  | 'LINK-SIMILAR-CHOICES'
+  | 'FORM-LABEL-AMBIGUITY'
+  | 'FORM-PLACEHOLDER-ONLY'
+  | 'ARIA-NAMING-CONSISTENCY'
+  | 'ARIA-NAME-CONFLICT'
+  | 'HEADING-CLARITY'
+  | 'HEADING-CONTENT-RELEVANCE'
+  | 'CONTENT-INSTRUCTION-AMBIGUITY'
+  | 'CONTENT-ERROR-CLARITY'
+  | 'CONTENT-TERM-CONSISTENCY';
 
 export type ContextualAssessmentValue =
   | 'potential_issue'
@@ -240,12 +258,22 @@ export interface AdvisoryAssessment {
   componentRef: string;
   domPath?: string;
   htmlSnippet?: string;
+  sourceExcerpt?: string;
+  sourceLanguage?: 'jsx' | 'tsx';
   ruleId: string;
   status: ContextualAssessmentValue;
   explanation: string;
   evidence: AdvisoryEvidence[];
   omittedEvidenceCount: number;
   confidence?: number;
+  /** Source file location, populated for React source analysis (not HTML). */
+  sourceLocation?: {
+    file: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
 }
 
 export interface AdvisoryEquivalentFinding {
@@ -261,6 +289,16 @@ export interface AdvisoryFindingGroup {
   componentRef: string;
   domPath?: string;
   htmlSnippet?: string;
+  sourceExcerpt?: string;
+  sourceLanguage?: 'jsx' | 'tsx';
+  /** Source file location for React source analysis findings. */
+  sourceLocation?: {
+    file: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
   ruleId: string;
   agreement:
     | 'unanimous_issue'
@@ -287,6 +325,16 @@ export interface AdvisoryJobReport {
   componentRef: string;
   domPath?: string;
   htmlSnippet?: string;
+  sourceExcerpt?: string;
+  sourceLanguage?: 'jsx' | 'tsx';
+  /** Source file location for React source analysis findings. */
+  sourceLocation?: {
+    file: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
   ruleId: string;
   status: JobStatus;
   validationStatus: ValidationStatus;

@@ -16,6 +16,8 @@ import {
   adaptContextSnapshotV2,
 } from '../../src/services/contextAdapterV2.js';
 import { extractHtmlContextResultV2 } from '../../src/services/contextExtractionV2.js';
+import { adaptReactSourceSnapshot } from '../../src/services/reactSourceAdapter.js';
+import { extractReactSourceTargets } from '../../src/services/reactSourceExtractor.js';
 import { runContextualAssessmentJobs } from '../../src/services/contextualAssessmentScheduler.js';
 
 const html = '<!doctype html><html><body><button>Continue</button></body></html>';
@@ -176,6 +178,64 @@ describe('contextual assessment scheduler integration', () => {
         validationStatus: 'valid',
       },
     ]);
+  });
+
+  it('dispatches bounded JSX source with source-specific prompts and batch metadata', async () => {
+    const source = '<button aria-label="Save changes">{actionLabel}</button>';
+    const extraction = extractReactSourceTargets(source, 'SaveButton.tsx');
+    expect(extraction.status).toBe('available');
+    if (extraction.status !== 'available') {
+      throw new Error('Expected React source extraction to succeed.');
+    }
+    const context = adaptReactSourceSnapshot(extraction.snapshot);
+    expect(context.status).toBe('ready');
+    const { scheduler, getPreparedRequest } = createScheduler();
+    const execution = await runContextualAssessmentJobs(
+      context,
+      source,
+      'SaveButton.tsx',
+      {
+        environment: { RAC_CONTEXTUAL_AI_ENABLED: 'true' },
+        scheduler,
+        sourceKind: 'react-source-file',
+      },
+    );
+    const batch = scheduler.run.mock.calls[0]?.[0][0];
+    const prepared = getPreparedRequest();
+    const requestBody = JSON.parse(
+      prepared?.request.messages[1]?.content ?? '{}',
+    ) as {
+      context?: {
+        target?: {
+          htmlSnippet?: string;
+          sourceExcerpt?: string;
+          sourceLanguage?: string;
+          sourceLocation?: { file?: string; startLine?: number };
+          sourceEvidence?: { hasDynamicChildren?: boolean };
+        };
+      };
+    };
+
+    expect(batch?.batch).toMatchObject({
+      sourceKind: 'react-source-file',
+      projectId: expect.stringMatching(/^react-source-file:/),
+      extractionVersion: 'react-source-v1',
+    });
+    expect(prepared?.job.promptVersion).toContain('react-source-v1');
+    expect(requestBody.context?.target).toMatchObject({
+      sourceExcerpt: '<button aria-label="Save changes">{actionLabel}</button>',
+      sourceLanguage: 'tsx',
+      sourceLocation: { file: 'SaveButton.tsx', startLine: 1 },
+      sourceEvidence: { hasDynamicChildren: true },
+    });
+    expect(requestBody.context?.target?.htmlSnippet).toBeUndefined();
+    expect(prepared?.request.messages[0]?.content).toContain(
+      'do not infer runtime behavior',
+    );
+    expect(execution.outcomes[0]).toMatchObject({
+      sourceExcerpt: '<button aria-label="Save changes">{actionLabel}</button>',
+      sourceLanguage: 'tsx',
+    });
   });
 
   it('sends bounded associated static context and explicit rule criteria', async () => {

@@ -39,6 +39,14 @@ type AdvisoryModelReport = {
   quotaLimited: boolean
 }
 
+type SourceLocation = {
+  file: string
+  startLine: number
+  startColumn: number
+  endLine: number
+  endColumn: number
+}
+
 type AdvisoryAssessment = {
   jobId: string
   providerId: string
@@ -47,6 +55,9 @@ type AdvisoryAssessment = {
   componentRef: string
   domPath?: string
   htmlSnippet?: string
+  sourceExcerpt?: string
+  sourceLanguage?: 'jsx' | 'tsx'
+  sourceLocation?: SourceLocation
   ruleId: string
   status: 'potential_issue' | 'no_issue_detected' | 'insufficient_context'
   explanation: string
@@ -68,6 +79,9 @@ type AdvisoryFindingGroup = {
   componentRef: string
   domPath?: string
   htmlSnippet?: string
+  sourceExcerpt?: string
+  sourceLanguage?: 'jsx' | 'tsx'
+  sourceLocation?: SourceLocation
   ruleId: string
   agreement:
     | 'unanimous_issue'
@@ -94,6 +108,9 @@ type AdvisoryJobReport = {
   componentRef: string
   domPath?: string
   htmlSnippet?: string
+  sourceExcerpt?: string
+  sourceLanguage?: 'jsx' | 'tsx'
+  sourceLocation?: SourceLocation
   ruleId: string
   status:
     | 'queued'
@@ -158,6 +175,31 @@ type AnalyzeResponse = {
   advisoryReport: AdvisoryReport
 }
 
+type SourceRuleCoverage = {
+  ruleId: string
+  evidenceAvailability: 'static-extractable' | 'partial-static' | 'not-available'
+  assessableFromSingleFile: boolean
+  unavailablePrerequisites: string[]
+}
+
+type SourceExtractionSummary = {
+  totalTargets: number
+  targetsByKind: Record<string, number>
+  parseErrorCount: number
+  completeness: 'complete' | 'partial'
+  sourceCharacterCount: number
+}
+
+type SourceAnalyzeResponse = {
+  filename: string
+  analyzedAt: string
+  ibmStatus: 'not_run_source_input'
+  ibmStatusNote: string
+  sourceExtraction: SourceExtractionSummary
+  ruleCoverage: SourceRuleCoverage[]
+  advisoryReport: AdvisoryReport
+}
+
 type SelectionState =
   | { status: 'empty' }
   | { status: 'reading'; name: string }
@@ -191,6 +233,17 @@ function isAnalyzeIssue(value: unknown): value is AnalyzeIssue {
   )
 }
 
+function isSourceLocation(value: unknown): value is SourceLocation {
+  return (
+    isRecord(value) &&
+    typeof value.file === 'string' &&
+    typeof value.startLine === 'number' &&
+    typeof value.startColumn === 'number' &&
+    typeof value.endLine === 'number' &&
+    typeof value.endColumn === 'number'
+  )
+}
+
 function isAdvisoryAssessment(value: unknown): value is AdvisoryAssessment {
   return (
     isRecord(value) &&
@@ -201,6 +254,9 @@ function isAdvisoryAssessment(value: unknown): value is AdvisoryAssessment {
     typeof value.componentRef === 'string' &&
     (value.domPath === undefined || typeof value.domPath === 'string') &&
     (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
+    (value.sourceExcerpt === undefined || typeof value.sourceExcerpt === 'string') &&
+    (value.sourceLanguage === undefined || ['jsx', 'tsx'].includes(String(value.sourceLanguage))) &&
+    (value.sourceLocation === undefined || isSourceLocation(value.sourceLocation)) &&
     typeof value.ruleId === 'string' &&
     [
       'potential_issue',
@@ -254,6 +310,9 @@ function isAdvisoryFindingGroup(value: unknown): value is AdvisoryFindingGroup {
     typeof value.componentRef === 'string' &&
     (value.domPath === undefined || typeof value.domPath === 'string') &&
     (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
+    (value.sourceExcerpt === undefined || typeof value.sourceExcerpt === 'string') &&
+    (value.sourceLanguage === undefined || ['jsx', 'tsx'].includes(String(value.sourceLanguage))) &&
+    (value.sourceLocation === undefined || isSourceLocation(value.sourceLocation)) &&
     typeof value.ruleId === 'string' &&
     [
       'unanimous_issue',
@@ -300,6 +359,9 @@ function isAdvisoryJobReport(value: unknown): value is AdvisoryJobReport {
     ].every((key) => typeof value[key] === 'string') &&
     (value.domPath === undefined || typeof value.domPath === 'string') &&
     (value.htmlSnippet === undefined || typeof value.htmlSnippet === 'string') &&
+    (value.sourceExcerpt === undefined || typeof value.sourceExcerpt === 'string') &&
+    (value.sourceLanguage === undefined || ['jsx', 'tsx'].includes(String(value.sourceLanguage))) &&
+    (value.sourceLocation === undefined || isSourceLocation(value.sourceLocation)) &&
     [
       'queued',
       'in_progress',
@@ -376,6 +438,20 @@ function isAnalyzeResponse(value: unknown): value is AnalyzeResponse {
     value.issues.every(isAnalyzeIssue) &&
     isAdvisoryReport(value.advisoryReport)
   )
+}
+
+function isSourceAnalyzeResponse(value: unknown): value is SourceAnalyzeResponse {
+  if (!isRecord(value)) return false
+  if (typeof value.filename !== 'string') return false
+  if (typeof value.analyzedAt !== 'string') return false
+  if (value.ibmStatus !== 'not_run_source_input') return false
+  if (typeof value.ibmStatusNote !== 'string') return false
+  if (!isRecord(value.sourceExtraction)) return false
+  if (typeof value.sourceExtraction.totalTargets !== 'number') return false
+  if (!isRecord(value.sourceExtraction.targetsByKind)) return false
+  if (!Array.isArray(value.ruleCoverage)) return false
+  if (!isAdvisoryReport(value.advisoryReport)) return false
+  return true
 }
 
 function getEmptyAssessmentMessage(report: AdvisoryReport): string {
@@ -487,6 +563,10 @@ function isHtmlFile(file: File): boolean {
   return /\.(html|htm)$/i.test(file.name)
 }
 
+function isReactSourceFile(file: File): boolean {
+  return /\.(jsx|tsx)$/i.test(file.name)
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} ${bytes === 1 ? 'byte' : 'bytes'}`
@@ -513,8 +593,10 @@ function getDocumentTitle(content: string): string | null {
 }
 
 function App() {
+  const [mode, setMode] = useState<'html' | 'react'>('html')
   const [selection, setSelection] = useState<SelectionState>(EMPTY_STATE)
   const [report, setReport] = useState<AnalyzeResponse | null>(null)
+  const [sourceReport, setSourceReport] = useState<SourceAnalyzeResponse | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisCancelled, setAnalysisCancelled] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
@@ -524,6 +606,19 @@ function App() {
   const readId = useRef(0)
   const analysisInFlight = useRef(false)
   const analysisController = useRef<AbortController | null>(null)
+
+  function handleModeSwitch(newMode: 'html' | 'react') {
+    if (newMode === mode) return
+    analysisController.current?.abort()
+    readId.current += 1
+    setMode(newMode)
+    setSelection(EMPTY_STATE)
+    setReport(null)
+    setSourceReport(null)
+    setAnalysisCancelled(false)
+    setAnalysisError(null)
+    setCopyPromptFeedback(null)
+  }
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0]
@@ -536,14 +631,19 @@ function App() {
     analysisController.current?.abort()
     const currentReadId = ++readId.current
     setReport(null)
+    setSourceReport(null)
     setAnalysisCancelled(false)
     setAnalysisError(null)
     setCopyPromptFeedback(null)
 
-    if (!isHtmlFile(file)) {
+    const isValid = mode === 'html' ? isHtmlFile(file) : isReactSourceFile(file)
+    if (!isValid) {
       setSelection({
         status: 'error',
-        message: 'Choose an HTML file ending in .html or .htm.',
+        message:
+          mode === 'html'
+            ? 'Choose an HTML file ending in .html or .htm.'
+            : 'Choose a React source file ending in .jsx or .tsx.',
       })
       return
     }
@@ -564,7 +664,7 @@ function App() {
           name: file.name,
           size: formatFileSize(file.size),
           characterCount: content.length,
-          title: getDocumentTitle(content),
+          title: mode === 'html' ? getDocumentTitle(content) : null,
         },
       })
     } catch {
@@ -574,7 +674,7 @@ function App() {
 
       setSelection({
         status: 'error',
-        message: `Couldn't read ${file.name}. Try selecting another HTML file.`,
+        message: `Couldn't read ${file.name}. Try selecting another ${mode === 'html' ? 'HTML' : 'React'} file.`,
       })
     }
   }
@@ -584,6 +684,7 @@ function App() {
     readId.current += 1
     setSelection(EMPTY_STATE)
     setReport(null)
+    setSourceReport(null)
     setAnalysisCancelled(false)
     setAnalysisError(null)
     setCopyPromptFeedback(null)
@@ -602,16 +703,29 @@ function App() {
     setAnalysisCancelled(false)
     setAnalysisError(null)
     setReport(null)
+    setSourceReport(null)
     setCopyPromptFeedback(null)
 
     try {
-      const response = await fetch('http://localhost:3001/api/analyze', {
+      const endpoint =
+        mode === 'html'
+          ? 'http://localhost:3001/api/analyze'
+          : 'http://localhost:3001/api/analyze-source'
+      const requestBody =
+        mode === 'html'
+          ? JSON.stringify({
+              html: selection.content,
+              filename: selection.info.name,
+            })
+          : JSON.stringify({
+              source: selection.content,
+              filename: selection.info.name,
+            })
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          html: selection.content,
-          filename: selection.info.name,
-        }),
+        body: requestBody,
         signal: controller.signal,
       })
 
@@ -635,14 +749,23 @@ function App() {
         return
       }
 
-      if (!isAnalyzeResponse(payload)) {
-        setAnalysisError(
-          'The analysis backend returned an invalid response. Please try again.',
-        )
-        return
+      if (mode === 'html') {
+        if (!isAnalyzeResponse(payload)) {
+          setAnalysisError(
+            'The analysis backend returned an invalid response. Please try again.',
+          )
+          return
+        }
+        setReport(payload)
+      } else {
+        if (!isSourceAnalyzeResponse(payload)) {
+          setAnalysisError(
+            'The analysis backend returned an invalid response. Please try again.',
+          )
+          return
+        }
+        setSourceReport(payload)
       }
-
-      setReport(payload)
     } catch {
       if (controller.signal.aborted) {
         if (currentReadId === readId.current) {
@@ -667,7 +790,10 @@ function App() {
   }
 
   async function handleCopyFixingPrompt() {
-    const prompt = report?.advisoryReport.fixingPrompt
+    const prompt =
+      mode === 'html'
+        ? report?.advisoryReport.fixingPrompt
+        : sourceReport?.advisoryReport.fixingPrompt
     if (!prompt) {
       return
     }
@@ -682,6 +808,9 @@ function App() {
     }
   }
 
+  const activeFilename = report ? report.filename : sourceReport ? sourceReport.filename : null
+  const activeFindingsCount = report ? report.summary.total : sourceReport ? sourceReport.advisoryReport.findings.length : 0
+
   const announcement =
     selection.status === 'reading'
       ? `Reading ${selection.name} locally.`
@@ -690,12 +819,280 @@ function App() {
           ? analysisCancelled
             ? 'Stopped waiting for the analysis response. Server processing may continue.'
             : 'An accessibility analysis request is in progress.'
-          : report
-            ? `Analysis complete for ${report.filename}. ${report.summary.total} findings reported.`
+          : activeFilename
+            ? `Analysis complete for ${activeFilename}. ${activeFindingsCount} findings reported.`
             : `${selection.info.name} is ready for analysis.`
         : selection.status === 'error'
           ? selection.message
           : analysisError ?? ''
+
+  function renderAdvisoryReport(advisoryReport: AdvisoryReport) {
+    return (
+      <section className="advisory-report" aria-labelledby="advisory-report-title">
+        <div className="findings-heading">
+          <h3 id="advisory-report-title">Separate AI assessments and findings</h3>
+          <span aria-label={`${advisoryReport.assessmentGroups.length} validated assessment groups`}>
+            {advisoryReport.assessmentGroups.length}
+          </span>
+        </div>
+        <p className="advisory-report-note" role="status">
+          {getAdvisoryStatusMessage(advisoryReport)} Advisory assessments never change IBM findings or counts and do not establish WCAG conformance.
+        </p>
+        <p className="advisory-count-note">
+          {advisoryReport.assessmentGroups.length} validated assessment group(s);{' '}
+          {advisoryReport.findings.length} group(s) include at least one potential issue.
+        </p>
+        <ul className="advisory-model-list">
+          {advisoryReport.models.map((model) => (
+            <li className="advisory-model-item" key={`${model.providerId}-${model.modelId}`}>
+              <div className="advisory-model-heading">
+                <strong>{model.modelId}</strong>
+                <span className="advisory-status">{formatStatus(model.status)}</span>
+              </div>
+              <p>
+                Provider: {model.providerId}; eligibility: {formatStatus(model.eligibility)};{' '}
+                {model.jobCount === 0
+                  ? 'no assessment jobs scheduled'
+                  : `validated ${model.validatedCount} of ${model.jobCount} jobs`}
+                ; invalid {model.invalidCount}; not validated {model.notValidatedCount}; failed {model.failedCount}
+                {model.quotaLimited ? '; provider quota limited' : ''}.
+              </p>
+              {model.reason && <p>{model.reason}</p>}
+            </li>
+          ))}
+        </ul>
+
+        {advisoryReport.jobs.length > 0 && (
+          <details className="advisory-job-details">
+            <summary>Per-job outcomes ({advisoryReport.jobs.length})</summary>
+            <ul className="advisory-job-list">
+              {advisoryReport.jobs.map((job) => (
+                <li key={job.jobId}>
+                  <code>
+                    {job.providerId}/{job.modelId}
+                  </code>{' '}
+                  — <code>{job.ruleId}</code>: {formatStatus(job.status)}; validation{' '}
+                  {formatStatus(job.validationStatus)}
+                  {job.errorClass ? `; ${job.errorClass}` : ''}
+                  {job.providerRequestId ? `; request ${job.providerRequestId}` : ''}
+                  {`; tokens in ${job.inputTokens ?? 'unknown'}, out ${job.outputTokens ?? 'unknown'} (${job.tokenUsageSource}).`}
+                  {job.domPath || job.htmlSnippet || job.sourceExcerpt || job.sourceLocation ? (
+                    <dl className="finding-details advisory-job-location">
+                      {job.sourceLocation && (
+                        <div>
+                          <dt>Source location</dt>
+                          <dd>
+                            <code>
+                              {job.sourceLocation.file}:{job.sourceLocation.startLine}:{job.sourceLocation.startColumn}–{job.sourceLocation.endLine}:{job.sourceLocation.endColumn}
+                            </code>
+                          </dd>
+                        </div>
+                      )}
+                      {job.domPath && (
+                        <div>
+                          <dt>DOM path</dt>
+                          <dd>
+                            <code>{job.domPath}</code>
+                          </dd>
+                        </div>
+                      )}
+                      {job.htmlSnippet && (
+                        <div>
+                          <dt>HTML snippet</dt>
+                          <dd>
+                            <pre>
+                              <code>{job.htmlSnippet}</code>
+                            </pre>
+                          </dd>
+                        </div>
+                      )}
+                      {job.sourceExcerpt && (
+                        <div>
+                          <dt>{job.sourceLanguage?.toUpperCase() ?? 'Source'} excerpt</dt>
+                          <dd>
+                            <pre>
+                              <code>{job.sourceExcerpt}</code>
+                            </pre>
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  ) : (
+                    <p>Element source location is unavailable.</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {advisoryReport.omittedJobCount > 0 && (
+              <p>{advisoryReport.omittedJobCount} additional jobs are omitted from this report.</p>
+            )}
+          </details>
+        )}
+
+        {advisoryReport.assessmentGroups.length === 0 ? (
+          <p className="empty-findings">{getEmptyAssessmentMessage(advisoryReport)}</p>
+        ) : (
+          <ol className="advisory-finding-list">
+            {advisoryReport.assessmentGroups.map((finding) => (
+              <li className="advisory-finding-item" key={`${finding.targetId}-${finding.ruleId}`}>
+                <div className="finding-topline">
+                  <span className="advisory-tag">{formatStatus(finding.agreement)}</span>
+                  <span className="advisory-tag advisory-tag-subtle">
+                    {finding.issueCount} of {finding.decisiveCount} decisive assessments flagged;{' '}
+                    {finding.abstentionCount} abstained
+                  </span>
+                  <code className="finding-rule">{finding.ruleId}</code>
+                </div>
+                <dl className="finding-details">
+                  {finding.sourceLocation && (
+                    <div>
+                      <dt>Source location</dt>
+                      <dd>
+                        <code>
+                          {finding.sourceLocation.file}:{finding.sourceLocation.startLine}:{finding.sourceLocation.startColumn}–{finding.sourceLocation.endLine}:{finding.sourceLocation.endColumn}
+                        </code>
+                      </dd>
+                    </div>
+                  )}
+                  {finding.domPath && (
+                    <div>
+                      <dt>DOM path</dt>
+                      <dd>
+                        <code>{finding.domPath}</code>
+                      </dd>
+                    </div>
+                  )}
+                  {finding.htmlSnippet && (
+                    <div>
+                      <dt>HTML snippet</dt>
+                      <dd>
+                        <pre>
+                          <code>{finding.htmlSnippet}</code>
+                        </pre>
+                      </dd>
+                    </div>
+                  )}
+                  {finding.sourceExcerpt && (
+                    <div>
+                      <dt>{finding.sourceLanguage?.toUpperCase() ?? 'Source'} excerpt</dt>
+                      <dd>
+                        <pre>
+                          <code>{finding.sourceExcerpt}</code>
+                        </pre>
+                      </dd>
+                    </div>
+                  )}
+                  {!finding.domPath && !finding.htmlSnippet && !finding.sourceExcerpt && !finding.sourceLocation && (
+                    <div>
+                      <dt>Element location</dt>
+                      <dd>Source location unavailable.</dd>
+                    </div>
+                  )}
+                  {finding.relatedIbmIssueIds.length > 0 && (
+                    <div>
+                      <dt>Separate IBM references</dt>
+                      <dd>
+                        {finding.relatedIbmIssueIds.join(', ')}
+                        {finding.omittedIbmIssueCount > 0
+                          ? `, plus ${finding.omittedIbmIssueCount} omitted`
+                          : ''}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+                <div className="advisory-equivalent-findings">
+                  <strong>
+                    Exact matching validated assessments (same status, explanation, and evidence references)
+                  </strong>
+                  <ul>
+                    {finding.equivalentFindings.map((equivalent) => (
+                      <li key={`${equivalent.status}-${equivalent.jobIds.join(',')}`}>
+                        {formatStatus(equivalent.status)} from {equivalent.modelCount} model(s)
+                        {': '}
+                        {getEquivalentModelNames(finding, equivalent).join(', ')}; evidence refs:{' '}
+                        {equivalent.evidenceRefIds.length > 0
+                          ? equivalent.evidenceRefIds.join(', ')
+                          : 'none'}
+                        {equivalent.omittedEvidenceCount > 0
+                          ? `, plus ${equivalent.omittedEvidenceCount} omitted`
+                          : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <ul className="advisory-assessment-list">
+                  {finding.assessments.map((assessment) => (
+                    <li key={assessment.jobId}>
+                      <strong>
+                        {assessment.providerId}/{assessment.modelId}
+                      </strong>
+                      : {formatStatus(assessment.status)} — {assessment.explanation}
+                      <span className="advisory-assessment-location">
+                        {' '}Assessment for this source element.
+                      </span>
+                      {assessment.confidence !== undefined && (
+                        <span>
+                          {' '}
+                          Model-reported confidence (uncalibrated): {assessment.confidence.toFixed(2)}.
+                        </span>
+                      )}
+                      {assessment.evidence.length > 0 && (
+                        <ul className="advisory-evidence-list">
+                          {assessment.evidence.map((evidence) => (
+                            <li key={evidence.id}>
+                              <code>{evidence.id}</code>
+                              {evidence.text ? ` — ${evidence.text}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {assessment.omittedEvidenceCount > 0 && (
+                        <span>
+                          {' '}
+                          {assessment.omittedEvidenceCount} additional evidence references omitted.
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        <section className="fixing-prompt" aria-labelledby="fixing-prompt-title">
+          <div className="fixing-prompt-heading">
+            <h4 id="fixing-prompt-title">Consolidated fixing prompt</h4>
+            {advisoryReport.fixingPrompt && (
+              <button className="button button-secondary" type="button" onClick={handleCopyFixingPrompt}>
+                Copy prompt
+              </button>
+            )}
+          </div>
+          <p>
+            This prompt is read-only here. Your external coding assistant decides whether to make
+            edits; this application never changes project files.
+          </p>
+          {advisoryReport.fixingPrompt ? (
+            <pre className="fixing-prompt-content">{advisoryReport.fixingPrompt}</pre>
+          ) : (
+            <p className="empty-findings">{getEmptyPromptMessage(advisoryReport)}</p>
+          )}
+          {advisoryReport.omittedPromptFindingCount > 0 && (
+            <p>
+              {advisoryReport.omittedPromptFindingCount} additional findings are omitted from the
+              bounded prompt.
+            </p>
+          )}
+          {copyPromptFeedback && (
+            <p className="copy-prompt-feedback" role="status">
+              {copyPromptFeedback}
+            </p>
+          )}
+        </section>
+      </section>
+    )
+  }
 
   return (
     <main className="page-shell">
@@ -706,17 +1103,44 @@ function App() {
           </span>
           <span>AccessCheck</span>
         </div>
-        <span className="stage-label">HTML checker</span>
+        <span className="stage-label">
+          {mode === 'html' ? 'HTML checker' : 'React source checker'}
+        </span>
       </header>
 
       <section className="workspace" aria-labelledby="page-title">
+        <div className="mode-selector" role="tablist" aria-label="Analysis mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'html'}
+            className={`mode-btn ${mode === 'html' ? 'mode-btn-active' : ''}`}
+            onClick={() => handleModeSwitch('html')}
+          >
+            HTML Document (.html)
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'react'}
+            className={`mode-btn ${mode === 'react' ? 'mode-btn-active' : ''}`}
+            onClick={() => handleModeSwitch('react')}
+          >
+            React Source (.jsx, .tsx)
+          </button>
+        </div>
+
         <div className="intro">
-          <p className="eyebrow">A clearer place to begin</p>
-          <h1 id="page-title">Check an HTML file</h1>
+          <p className="eyebrow">
+            {mode === 'html' ? 'A clearer place to begin' : 'Static source accessibility'}
+          </p>
+          <h1 id="page-title">
+            {mode === 'html' ? 'Check an HTML file' : 'Check a React source file'}
+          </h1>
           <p className="intro-copy">
-            File selection and preview stay in your browser. When you choose to
-            analyze, the HTML contents are sent to the local analysis backend
-            at localhost:3001.
+            {mode === 'html'
+              ? 'File selection and preview stay in your browser. When you choose to analyze, the HTML contents are sent to the local analysis backend at localhost:3001.'
+              : 'Static AST-based accessibility analysis for one React source file. Source is read in your browser; when you click Analyze, bounded excerpts are assessed by the local backend and configured AI models. IBM Equal Access is not run for source input.'}
           </p>
         </div>
 
@@ -727,7 +1151,7 @@ function App() {
             </span>
             <div>
               <h2 id="file-panel-title">Select your file</h2>
-              <p>HTML documents only</p>
+              <p>{mode === 'html' ? 'HTML documents only' : 'React JSX / TSX only'}</p>
             </div>
           </div>
 
@@ -753,37 +1177,43 @@ function App() {
                 ? 'Your file is ready'
                 : selection.status === 'reading'
                   ? 'Reading your file'
-                  : 'Choose an HTML file'}
+                  : mode === 'html'
+                    ? 'Choose an HTML file'
+                    : 'Choose a React .jsx or .tsx file'}
             </h3>
             <p className="picker-copy">
               {selection.status === 'reading'
                 ? `Reading ${selection.name} on this device…`
-                : 'Select a .html or .htm file from your device.'}
+                : mode === 'html'
+                  ? 'Select a .html or .htm file from your device.'
+                  : 'Select a .jsx or .tsx source file from your device.'}
             </p>
 
             <div className="picker-control">
               <input
                 className="file-input"
-                id="html-file"
+                id="source-file-input"
                 type="file"
-                accept=".html,.htm,text/html"
+                accept={mode === 'html' ? '.html,.htm,text/html' : '.jsx,.tsx'}
                 aria-describedby="file-help"
                 onChange={handleFileChange}
               />
-              <label className="button button-primary" htmlFor="html-file">
+              <label className="button button-primary" htmlFor="source-file-input">
                 {selection.status === 'selected'
                   ? 'Choose another file'
                   : 'Browse files'}
               </label>
             </div>
             <p className="file-help" id="file-help">
-              Accepted formats: .html, .htm
+              {mode === 'html' ? 'Accepted formats: .html, .htm' : 'Accepted formats: .jsx, .tsx'}
             </p>
           </div>
 
           <p className="privacy-note">
             <span className="privacy-dot" aria-hidden="true" />
-            Read locally; HTML is sent to localhost:3001 only when you analyze.
+            {mode === 'html'
+              ? 'Read locally; HTML is sent to localhost:3001 only when you analyze.'
+              : 'Read locally; source is analyzed only when you start analysis. Bounded source excerpts may be sent to configured external AI model providers. No credentials or private model configurations are exposed.'}
           </p>
         </section>
 
@@ -819,14 +1249,17 @@ function App() {
                   )}
                 </dd>
               </div>
-              <div className="detail-item detail-item-wide">
-                <dt>Document title</dt>
-                <dd>{selection.info.title ?? 'No title found'}</dd>
-              </div>
+              {mode === 'html' && (
+                <div className="detail-item detail-item-wide">
+                  <dt>Document title</dt>
+                  <dd>{selection.info.title ?? 'No title found'}</dd>
+                </div>
+              )}
             </dl>
             <p className="analysis-note">
-              File details are read locally. Choose Analyze HTML to send its
-              contents to the local backend and run the accessibility check.
+              {mode === 'html'
+                ? 'File details are read locally. Choose Analyze HTML to send its contents to the local backend and run the accessibility check.'
+                : 'File details are read locally. Choose Analyze React source to extract static JSX accessibility evidence and run contextual advisory checks.'}
             </p>
             <div className="analysis-actions">
               {isAnalyzing ? (
@@ -843,7 +1276,7 @@ function App() {
                   type="button"
                   onClick={handleAnalyze}
                 >
-                  Analyze HTML
+                  {mode === 'html' ? 'Analyze HTML' : 'Analyze React source'}
                 </button>
               )}
             </div>
@@ -981,287 +1414,76 @@ function App() {
               </ol>
             )}
 
-            <section className="advisory-report" aria-labelledby="advisory-report-title">
-              <div className="findings-heading">
-                <h3 id="advisory-report-title">
-                  Separate AI assessments and findings
-                </h3>
-                <span
-                  aria-label={`${report.advisoryReport.assessmentGroups.length} validated assessment groups`}
-                >
-                  {report.advisoryReport.assessmentGroups.length}
-                </span>
+            {renderAdvisoryReport(report.advisoryReport)}
+          </section>
+        )}
+
+        {sourceReport && (
+          <section className="analysis-report" aria-labelledby="source-report-title">
+            <div className="report-heading">
+              <div>
+                <p className="eyebrow">Analysis results</p>
+                <h2 id="source-report-title">React source report</h2>
               </div>
-              <p className="advisory-report-note" role="status">
-                {getAdvisoryStatusMessage(report.advisoryReport)} Advisory
-                assessments never change IBM findings or counts and do not
-                establish WCAG conformance.
+              <p className="report-meta">
+                <strong>{sourceReport.filename}</strong>
+                <time dateTime={sourceReport.analyzedAt}>
+                  {new Intl.DateTimeFormat(undefined, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  }).format(new Date(sourceReport.analyzedAt))}
+                </time>
               </p>
-              <p className="advisory-count-note">
-                {report.advisoryReport.assessmentGroups.length} validated
-                assessment group(s);{' '}
-                {report.advisoryReport.findings.length} group(s) include at
-                least one potential issue.
-              </p>
-              <ul className="advisory-model-list">
-                {report.advisoryReport.models.map((model) => (
-                  <li
-                    className="advisory-model-item"
-                    key={`${model.providerId}-${model.modelId}`}
-                  >
-                    <div className="advisory-model-heading">
-                      <strong>{model.modelId}</strong>
-                      <span className="advisory-status">
-                        {formatStatus(model.status)}
-                      </span>
-                    </div>
-                    <p>
-                      Provider: {model.providerId}; eligibility:{' '}
-                      {formatStatus(model.eligibility)};{' '}
-                      {model.jobCount === 0
-                        ? 'no assessment jobs scheduled'
-                        : `validated ${model.validatedCount} of ${model.jobCount} jobs`}; invalid{' '}
-                      {model.invalidCount}; not validated{' '}
-                      {model.notValidatedCount}; failed {model.failedCount}
-                      {model.quotaLimited ? '; provider quota limited' : ''}.
-                    </p>
-                    {model.reason && <p>{model.reason}</p>}
-                  </li>
-                ))}
-              </ul>
+            </div>
 
-              {report.advisoryReport.jobs.length > 0 && (
-                <details className="advisory-job-details">
-                  <summary>
-                    Per-job outcomes ({report.advisoryReport.jobs.length})
-                  </summary>
-                  <ul className="advisory-job-list">
-                    {report.advisoryReport.jobs.map((job) => (
-                      <li key={job.jobId}>
-                        <code>
-                          {job.providerId}/{job.modelId}
-                        </code>{' '}
-                        — <code>{job.ruleId}</code>:{' '}
-                        {formatStatus(job.status)};{' '}
-                        validation {formatStatus(job.validationStatus)}
-                        {job.errorClass ? `; ${job.errorClass}` : ''}
-                        {job.providerRequestId
-                          ? `; request ${job.providerRequestId}`
-                          : ''}
-                        {`; tokens in ${
-                          job.inputTokens ?? 'unknown'
-                        }, out ${
-                          job.outputTokens ?? 'unknown'
-                        } (${job.tokenUsageSource})`}
-                        .
-                        {job.domPath || job.htmlSnippet ? (
-                          <dl className="finding-details advisory-job-location">
-                            {job.domPath && (
-                              <div>
-                                <dt>DOM path</dt>
-                                <dd>
-                                  <code>{job.domPath}</code>
-                                </dd>
-                              </div>
-                            )}
-                            {job.htmlSnippet && (
-                              <div>
-                                <dt>HTML snippet</dt>
-                                <dd>
-                                  <pre>
-                                    <code>{job.htmlSnippet}</code>
-                                  </pre>
-                                </dd>
-                              </div>
-                            )}
-                          </dl>
-                        ) : (
-                          <p>Element source location is unavailable.</p>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {report.advisoryReport.omittedJobCount > 0 && (
-                    <p>
-                      {report.advisoryReport.omittedJobCount} additional jobs
-                      are omitted from this report.
-                    </p>
-                  )}
-                </details>
+            <div className="source-notice-banner" role="status">
+              <strong>IBM Equal Access Checker was not run</strong>
+              <p>{sourceReport.ibmStatusNote}</p>
+            </div>
+
+            <div className="findings-heading">
+              <h3>Extracted JSX targets</h3>
+              <span>{sourceReport.sourceExtraction.totalTargets}</span>
+            </div>
+            <div className="kind-badge-list">
+              {Object.entries(sourceReport.sourceExtraction.targetsByKind).map(
+                ([kind, count]) => (
+                  <span className="kind-badge" key={kind}>
+                    {kind}: <strong>{count}</strong>
+                  </span>
+                ),
               )}
+            </div>
 
-              {report.advisoryReport.assessmentGroups.length === 0 ? (
-                <p className="empty-findings">
-                  {getEmptyAssessmentMessage(report.advisoryReport)}
-                </p>
-              ) : (
-                <ol className="advisory-finding-list">
-                  {report.advisoryReport.assessmentGroups.map((finding) => (
-                    <li
-                      className="advisory-finding-item"
-                      key={`${finding.targetId}-${finding.ruleId}`}
-                    >
-                      <div className="finding-topline">
-                        <span className="advisory-tag">
-                          {formatStatus(finding.agreement)}
-                        </span>
-                        <span className="advisory-tag advisory-tag-subtle">
-                          {finding.issueCount} of {finding.decisiveCount}{' '}
-                          decisive assessments flagged;{' '}
-                          {finding.abstentionCount} abstained
-                        </span>
-                        <code className="finding-rule">{finding.ruleId}</code>
-                      </div>
-                      <dl className="finding-details">
-                        {finding.domPath && (
-                          <div>
-                            <dt>DOM path</dt>
-                            <dd>
-                              <code>{finding.domPath}</code>
-                            </dd>
-                          </div>
-                        )}
-                        {finding.htmlSnippet && (
-                          <div>
-                            <dt>HTML snippet</dt>
-                            <dd>
-                              <pre>
-                                <code>{finding.htmlSnippet}</code>
-                              </pre>
-                            </dd>
-                          </div>
-                        )}
-                        {!finding.domPath && !finding.htmlSnippet && (
-                          <div>
-                            <dt>Element location</dt>
-                            <dd>Source location unavailable.</dd>
-                          </div>
-                        )}
-                        {finding.relatedIbmIssueIds.length > 0 && (
-                          <div>
-                            <dt>Separate IBM references</dt>
-                            <dd>
-                              {finding.relatedIbmIssueIds.join(', ')}
-                              {finding.omittedIbmIssueCount > 0
-                                ? `, plus ${finding.omittedIbmIssueCount} omitted`
-                                : ''}
-                            </dd>
-                          </div>
-                        )}
-                      </dl>
-                      <div className="advisory-equivalent-findings">
-                        <strong>
-                          Exact matching validated assessments (same status,
-                          explanation, and evidence references)
-                        </strong>
-                        <ul>
-                          {finding.equivalentFindings.map((equivalent) => (
-                            <li
-                              key={`${equivalent.status}-${equivalent.jobIds.join(',')}`}
-                            >
-                              {formatStatus(equivalent.status)} from{' '}
-                              {equivalent.modelCount} model(s)
-                              {': '}
-                              {getEquivalentModelNames(
-                                finding,
-                                equivalent,
-                              ).join(', ')}
-                              ; evidence refs:{' '}
-                              {equivalent.evidenceRefIds.length > 0
-                                ? equivalent.evidenceRefIds.join(', ')
-                                : 'none'}
-                              {equivalent.omittedEvidenceCount > 0
-                                ? `, plus ${equivalent.omittedEvidenceCount} omitted`
-                                : ''}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <ul className="advisory-assessment-list">
-                        {finding.assessments.map((assessment) => (
-                          <li key={assessment.jobId}>
-                            <strong>
-                              {assessment.providerId}/{assessment.modelId}
-                            </strong>
-                            : {formatStatus(assessment.status)} —{' '}
-                            {assessment.explanation}
-                            <span className="advisory-assessment-location">
-                              {' '}Assessment for this source element.
-                            </span>
-                            {assessment.confidence !== undefined && (
-                              <span>
-                                {' '}
-                                Model-reported confidence (uncalibrated):{' '}
-                                {assessment.confidence.toFixed(2)}.
-                              </span>
-                            )}
-                            {assessment.evidence.length > 0 && (
-                              <ul className="advisory-evidence-list">
-                                {assessment.evidence.map((evidence) => (
-                                  <li key={evidence.id}>
-                                    <code>{evidence.id}</code>
-                                    {evidence.text
-                                      ? ` — ${evidence.text}`
-                                      : ''}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            {assessment.omittedEvidenceCount > 0 && (
-                              <span>
-                                {' '}
-                                {assessment.omittedEvidenceCount} additional
-                                evidence references omitted.
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
+            <details className="rule-coverage-details">
+              <summary>
+                20 contextual rules coverage ({sourceReport.ruleCoverage.filter((r) => r.assessableFromSingleFile).length} assessable in single-file mode)
+              </summary>
+              <table className="rule-coverage-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Rule ID</th>
+                    <th scope="col">Single-file status</th>
+                    <th scope="col">Unavailable prerequisites</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sourceReport.ruleCoverage.map((rule) => (
+                    <tr key={rule.ruleId}>
+                      <td><code>{rule.ruleId}</code></td>
+                      <td>
+                        {rule.assessableFromSingleFile
+                          ? 'Assessable from source'
+                          : 'Deferred (requires project/browser/image/runtime)'}
+                      </td>
+                      <td>{rule.unavailablePrerequisites.join('; ') || 'None'}</td>
+                    </tr>
                   ))}
-                </ol>
-              )}
+                </tbody>
+              </table>
+            </details>
 
-              <section className="fixing-prompt" aria-labelledby="fixing-prompt-title">
-                <div className="fixing-prompt-heading">
-                  <h4 id="fixing-prompt-title">Consolidated fixing prompt</h4>
-                  {report.advisoryReport.fixingPrompt && (
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      onClick={handleCopyFixingPrompt}
-                    >
-                      Copy prompt
-                    </button>
-                  )}
-                </div>
-                <p>
-                  This prompt is read-only here. Your external coding assistant
-                  decides whether to make edits; this application never changes
-                  project files.
-                </p>
-                {report.advisoryReport.fixingPrompt ? (
-                  <pre className="fixing-prompt-content">
-                    {report.advisoryReport.fixingPrompt}
-                  </pre>
-                ) : (
-                  <p className="empty-findings">
-                    {getEmptyPromptMessage(report.advisoryReport)}
-                  </p>
-                )}
-                {report.advisoryReport.omittedPromptFindingCount > 0 && (
-                  <p>
-                    {report.advisoryReport.omittedPromptFindingCount} additional
-                    findings are omitted from the bounded prompt.
-                  </p>
-                )}
-                {copyPromptFeedback && (
-                  <p className="copy-prompt-feedback" role="status">
-                    {copyPromptFeedback}
-                  </p>
-                )}
-              </section>
-            </section>
+            {renderAdvisoryReport(sourceReport.advisoryReport)}
           </section>
         )}
 

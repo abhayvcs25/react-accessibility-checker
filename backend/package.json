@@ -15,12 +15,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@babel/parser": "^8.1.2",
     "accessibility-checker": "^4.0.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "parse5": "^8.0.1"
   },
   "devDependencies": {
+    "@babel/types": "^8.1.2",
+    "@types/babel__parser": "^7.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",

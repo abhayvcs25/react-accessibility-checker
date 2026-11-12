@@ -67,6 +67,15 @@ export interface AdvisoryJobOutcome {
   componentRef: string;
   domPath?: string;
   htmlSnippet?: string;
+  sourceExcerpt?: string;
+  sourceLanguage?: 'jsx' | 'tsx';
+  sourceLocation?: {
+    file: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
   ruleId: string;
   status: JobStatus;
   validationStatus: ValidationStatus;
@@ -181,6 +190,15 @@ function toAssessment(
   if (outcome.htmlSnippet) {
     assessment.htmlSnippet = boundedText(outcome.htmlSnippet);
   }
+  if (outcome.sourceExcerpt) {
+    assessment.sourceExcerpt = boundedText(outcome.sourceExcerpt);
+  }
+  if (outcome.sourceLanguage) {
+    assessment.sourceLanguage = outcome.sourceLanguage;
+  }
+  if (outcome.sourceLocation) {
+    assessment.sourceLocation = outcome.sourceLocation;
+  }
   return assessment;
 }
 
@@ -215,6 +233,15 @@ function toJobReport(
     ...(outcome.domPath ? { domPath: boundedText(outcome.domPath) } : {}),
     ...(outcome.htmlSnippet
       ? { htmlSnippet: boundedText(outcome.htmlSnippet) }
+      : {}),
+    ...(outcome.sourceExcerpt
+      ? { sourceExcerpt: boundedText(outcome.sourceExcerpt) }
+      : {}),
+    ...(outcome.sourceLanguage
+      ? { sourceLanguage: outcome.sourceLanguage }
+      : {}),
+    ...(outcome.sourceLocation
+      ? { sourceLocation: outcome.sourceLocation }
       : {}),
     ruleId: boundedText(outcome.ruleId, 128),
     status:
@@ -315,6 +342,9 @@ function buildFindings(
         componentRef: first.componentRef,
         ...(first.domPath ? { domPath: first.domPath } : {}),
         ...(first.htmlSnippet ? { htmlSnippet: first.htmlSnippet } : {}),
+        ...(first.sourceExcerpt ? { sourceExcerpt: first.sourceExcerpt } : {}),
+        ...(first.sourceLanguage ? { sourceLanguage: first.sourceLanguage } : {}),
+        ...(first.sourceLocation ? { sourceLocation: first.sourceLocation } : {}),
         ruleId: first.ruleId,
         agreement,
         issueCount: items.filter((item) => item.status === 'potential_issue')
@@ -397,6 +427,16 @@ function buildFixingPrompt(
     }
     if (finding.htmlSnippet) {
       findingLines.push(`   HTML snippet: ${finding.htmlSnippet}`);
+    }
+    if (finding.sourceExcerpt) {
+      findingLines.push(
+        `   ${finding.sourceLanguage?.toUpperCase() ?? 'Source'} excerpt: ${finding.sourceExcerpt}`,
+      );
+    }
+    if (finding.sourceLocation) {
+      findingLines.push(
+        `   Source location: ${finding.sourceLocation.file}:${finding.sourceLocation.startLine}:${finding.sourceLocation.startColumn}-${finding.sourceLocation.endLine}:${finding.sourceLocation.endColumn}`,
+      );
     }
     if (finding.relatedIbmIssueIds.length > 0) {
       findingLines.push(

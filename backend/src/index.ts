@@ -4,6 +4,7 @@ import express from 'express';
 import { MAX_BODY_SIZE, PORT } from './config.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import analyzeRouter from './routes/analyze.js';
+import analyzeSourceRouter from './routes/analyzeSource.js';
 import aiRouter from './routes/ai.js';
 import { closeChecker } from './services/checker.js';
 
@@ -17,6 +18,7 @@ app.use(
 );
 app.use(express.json({ limit: MAX_BODY_SIZE }));
 app.use(analyzeRouter);
+app.use(analyzeSourceRouter);
 app.use(aiRouter);
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

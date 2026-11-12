@@ -24,6 +24,13 @@ export type SourceLocator =
       endOffset: number;
       sourceLanguage: 'html';
       offsetUnit: 'utf16-code-unit';
+    }
+  | {
+      kind: 'jsx-source-range';
+      startOffset: number;
+      endOffset: number;
+      sourceLanguage: 'jsx' | 'tsx';
+      offsetUnit: 'utf16-code-unit';
     };
 
 export type ContextRecordRef =
@@ -455,6 +462,9 @@ export interface TargetRelationshipProjection {
 export interface AssociatedTargetEvidence {
   evidence: SupportingEvidence;
   relationships: TargetRelationshipProjection[];
+  sourceEvidence?: {
+    hasDynamicChildren: boolean;
+  };
 }
 
 export type AdapterUnitTruncation =
@@ -476,6 +486,37 @@ export interface TargetContextInputUnit {
   associatedEvidence: AssociatedTargetEvidence[];
   relationships: TargetRelationshipProjection[];
   completeness: AdapterUnitCompleteness;
+  /** Explicit rule ID if pre-assigned (e.g. from React source analysis). */
+  ruleId?: string;
+  /** Explicit rule IDs if pre-assigned. */
+  rules?: string[];
+  /** Exact source location for source-based targets (React JSX/TSX). */
+  sourceLocation?: {
+    file: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  };
+  sourceLanguage?: 'jsx' | 'tsx';
+  sourceEvidence?: {
+    hasDynamicChildren: boolean;
+    hasPropSpread: boolean;
+    dynamicAttributes: string[];
+    className: AttributeObservation<BoundedString>;
+    componentName?: string;
+    sourceExcerptTruncated: boolean;
+    omittedAssociatedEvidenceCount?: number;
+    ancestors: Array<{
+      recordId: string;
+      tagName: string;
+      role?: string;
+      text?: BoundedString;
+      hasDynamicChildren: boolean;
+    }>;
+  };
+  /** Authored source excerpt / snippet. */
+  snippet?: string;
 }
 
 export type AdapterCompleteness =
