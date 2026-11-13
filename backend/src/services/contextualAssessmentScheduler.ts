@@ -600,7 +600,9 @@ function prepareAssessment(
   const requestText = JSON.stringify({
     targetId: unit.focal.id,
     ruleId,
-    ruleGuidance: RULE_GUIDANCE[ruleId],
+    ruleGuidance: sourceLanguage
+      ? SOURCE_RULE_POLICIES[ruleId].ruleGuidance
+      : RULE_GUIDANCE[ruleId],
     providerId: model.providerId,
     modelId: model.modelId,
     context,

@@ -18,6 +18,7 @@ import {
 import { extractHtmlContextResultV2 } from '../../src/services/contextExtractionV2.js';
 import { adaptReactSourceSnapshot } from '../../src/services/reactSourceAdapter.js';
 import { extractReactSourceTargets } from '../../src/services/reactSourceExtractor.js';
+import { SOURCE_RULE_POLICIES } from '../../src/services/reactSourceRuleMap.js';
 import { runContextualAssessmentJobs } from '../../src/services/contextualAssessmentScheduler.js';
 
 const html = '<!doctype html><html><body><button>Continue</button></body></html>';
@@ -205,6 +206,7 @@ describe('contextual assessment scheduler integration', () => {
     const requestBody = JSON.parse(
       prepared?.request.messages[1]?.content ?? '{}',
     ) as {
+      ruleGuidance?: string;
       context?: {
         target?: {
           htmlSnippet?: string;
@@ -229,6 +231,9 @@ describe('contextual assessment scheduler integration', () => {
       sourceEvidence: { hasDynamicChildren: true },
     });
     expect(requestBody.context?.target?.htmlSnippet).toBeUndefined();
+    expect(requestBody.ruleGuidance).toBe(
+      SOURCE_RULE_POLICIES['BUTTON-PURPOSE-CLARITY'].ruleGuidance,
+    );
     expect(prepared?.request.messages[0]?.content).toContain(
       'do not infer runtime behavior',
     );

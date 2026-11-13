@@ -57,7 +57,12 @@ describe('POST /api/analyze-source', () => {
     const report = await response.json() as {
       ibmStatus: string;
       sourceExtraction: { totalTargets: number };
-      ruleCoverage: Array<{ ruleId: string; assessableFromSingleFile: boolean }>;
+      ruleCoverage: Array<{
+        ruleId: string;
+        assessableFromSingleFile: boolean;
+        applicableTargetCount: number;
+        scheduledUnitCount: number;
+      }>;
     };
     expect(report.ibmStatus).toBe('not_run_source_input');
     expect(report.sourceExtraction.totalTargets).toBe(1);
@@ -68,6 +73,16 @@ describe('POST /api/analyze-source', () => {
       .toMatchObject({ assessableFromSingleFile: false });
     expect(report.ruleCoverage.find((rule) => rule.ruleId === 'IMG-ALT-RELEVANCE'))
       .toMatchObject({ assessableFromSingleFile: false });
+    expect(report.ruleCoverage.find((rule) => rule.ruleId === 'BUTTON-PURPOSE-CLARITY'))
+      .toMatchObject({
+        applicableTargetCount: 1,
+        scheduledUnitCount: 1,
+      });
+    expect(report.ruleCoverage.find((rule) => rule.ruleId === 'BUTTON-ACTION-CONSISTENCY'))
+      .toMatchObject({
+        applicableTargetCount: 1,
+        scheduledUnitCount: 0,
+      });
     expect(mocks.runContextualAssessmentJobs).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'ready' }),
       '<button>Save</button>',

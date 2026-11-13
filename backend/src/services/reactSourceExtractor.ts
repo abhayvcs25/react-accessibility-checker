@@ -366,7 +366,7 @@ function isTruncatedAvailability(value: unknown): boolean {
 }
 
 function addTarget(state: ExtractorState, target: ReactTarget): void {
-  addTarget(state, target);
+  state.targets.push(target);
   if (Object.values(target).some(isTruncatedAvailability)) {
     state.attributeTruncated = true;
   }

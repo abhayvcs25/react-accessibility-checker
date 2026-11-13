@@ -19,6 +19,7 @@ import { adaptReactSourceSnapshot } from '../services/reactSourceAdapter.js';
 import { runContextualAssessmentJobs } from '../services/contextualAssessmentScheduler.js';
 import { aggregateAdvisoryReport } from '../services/reportAggregation.js';
 import { SOURCE_RULE_POLICIES } from '../services/reactSourceRuleMap.js';
+import { getRulesForTargetKind } from '../services/reactSourceRuleMap.js';
 
 const router = Router();
 
@@ -47,6 +48,8 @@ export interface SourceAnalyzeResponse {
     ruleId: string;
     evidenceAvailability: 'static-extractable' | 'partial-static' | 'not-available';
     assessableFromSingleFile: boolean;
+    applicableTargetCount: number;
+    scheduledUnitCount: number;
     unavailablePrerequisites: string[];
   }>;
   /** Multi-model advisory results (same pipeline as HTML analysis). */
@@ -163,6 +166,12 @@ router.post(
         ruleId: policy.ruleId,
         evidenceAvailability: policy.evidenceAvailability,
         assessableFromSingleFile: policy.assessableFromSingleFile,
+        applicableTargetCount: snapshot.targets.filter((target) =>
+          getRulesForTargetKind(target.kind).includes(policy.ruleId),
+        ).length,
+        scheduledUnitCount: adapterResult.status === 'ready' || adapterResult.status === 'partial'
+          ? adapterResult.input.units.filter((unit) => unit.ruleId === policy.ruleId).length
+          : 0,
         unavailablePrerequisites: policy.unavailablePrerequisites,
       }));
 

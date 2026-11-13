@@ -179,6 +179,8 @@ type SourceRuleCoverage = {
   ruleId: string
   evidenceAvailability: 'static-extractable' | 'partial-static' | 'not-available'
   assessableFromSingleFile: boolean
+  applicableTargetCount: number
+  scheduledUnitCount: number
   unavailablePrerequisites: string[]
 }
 
@@ -1457,13 +1459,14 @@ function App() {
 
             <details className="rule-coverage-details">
               <summary>
-                20 contextual rules coverage ({sourceReport.ruleCoverage.filter((r) => r.assessableFromSingleFile).length} assessable in single-file mode)
+                20 contextual rules coverage ({sourceReport.ruleCoverage.filter((r) => r.scheduledUnitCount > 0).length} with scheduled evidence)
               </summary>
               <table className="rule-coverage-table">
                 <thead>
                   <tr>
                     <th scope="col">Rule ID</th>
                     <th scope="col">Single-file status</th>
+                    <th scope="col">Targets / scheduled units</th>
                     <th scope="col">Unavailable prerequisites</th>
                   </tr>
                 </thead>
@@ -1476,6 +1479,7 @@ function App() {
                           ? 'Assessable from source'
                           : 'Deferred (requires project/browser/image/runtime)'}
                       </td>
+                      <td>{rule.applicableTargetCount} / {rule.scheduledUnitCount}</td>
                       <td>{rule.unavailablePrerequisites.join('; ') || 'None'}</td>
                     </tr>
                   ))}
