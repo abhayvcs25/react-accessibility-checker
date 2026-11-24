@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import Busboy from 'busboy';
 import { PROJECT_INTAKE_LIMITS } from '../services/projectIntakeLimits.js';
 import { isHostilePath, processProjectIntake, type ParsedPart } from '../services/projectIntake.js';
+import { ValidationError, UpstreamError } from '../errors.js';
 
 const router = Router();
 
@@ -119,26 +120,17 @@ router.post(
       try {
         await Promise.all(filePromises);
       } catch {
-        res.status(400).json({
-          error: 'Failed to read multipart stream',
-          code: 'malformed-multipart',
-        });
+        next(new ValidationError('Failed to read multipart stream', { code: 'malformed-multipart' }));
         return;
       }
 
       if (requestMalformed) {
-        res.status(400).json({
-          error: `Malformed multipart request: ${malformedReason}`,
-          code: 'malformed-multipart',
-        });
+        next(new ValidationError(`Malformed multipart request: ${malformedReason}`, { code: 'malformed-multipart' }));
         return;
       }
 
       if (parts.length === 0) {
-        res.status(400).json({
-          error: 'No files provided in multipart request',
-          code: 'no-files',
-        });
+        next(new ValidationError('No files provided in multipart request', { code: 'no-files' }));
         return;
       }
 
@@ -146,10 +138,7 @@ router.post(
       for (const part of parts) {
         if (isHostilePath(part.relativePath)) {
           console.warn(`[project-intake] Blocked hostile path: ${part.relativePath}`);
-          res.status(400).json({
-            error: 'Absolute paths or directory traversal are not allowed',
-            code: 'invalid-path',
-          });
+          next(new ValidationError('Absolute paths or directory traversal are not allowed', { code: 'invalid-path' }));
           return;
         }
       }
@@ -166,7 +155,7 @@ router.post(
         res.status(200).json(response);
       } catch (err) {
         console.error('[project-intake] Error processing intake:', err);
-        next(err);
+        next(new UpstreamError('Project intake processing failed', { originalMessage: err instanceof Error ? err.message : String(err) }));
       }
     });
 

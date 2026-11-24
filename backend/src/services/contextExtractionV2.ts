@@ -38,19 +38,20 @@ import type {
   ProjectTargetEvidence,
 } from '../types/contextProject.js';
 import { CONTEXT_SCHEMA_V2 } from '../types/contextV2.js';
+import { BOUNDS } from '../config/bounds.js';
 
 type HtmlNode = DefaultTreeAdapterTypes.Node;
 type HtmlElement = DefaultTreeAdapterTypes.Element;
 
-const MAX_CONTEXT_ELEMENTS = 500;
-const MAX_TEXT_LENGTH = 500;
-const MAX_ATTRIBUTE_VALUE_LENGTH = 250;
-const MAX_ATTRIBUTE_NAME_LENGTH = 100;
-const MAX_ARIA_ATTRIBUTES = 20;
-const MAX_ID_REFERENCE_ATTRIBUTE_LENGTH = 10_000;
-const MAX_ID_REFERENCE_TOKENS = 50;
-const MAX_ID_REFERENCE_TARGETS_PER_ID = 20;
-const MAX_TARGET_HTML_SNIPPET_LENGTH = 500;
+const MAX_CONTEXT_ELEMENTS = BOUNDS.maxElements;
+const MAX_TEXT_LENGTH = BOUNDS.maxTextLength;
+const MAX_ATTRIBUTE_VALUE_LENGTH = BOUNDS.maxAttributeValueLength;
+const MAX_ATTRIBUTE_NAME_LENGTH = BOUNDS.maxAttributeNameLength;
+const MAX_ARIA_ATTRIBUTES = BOUNDS.maxAriaAttributes;
+const MAX_ID_REFERENCE_ATTRIBUTE_LENGTH = BOUNDS.maxIdReferenceAttributeLength;
+const MAX_ID_REFERENCE_TOKENS = BOUNDS.maxIdReferenceTokens;
+const MAX_ID_REFERENCE_TARGETS_PER_ID = BOUNDS.maxIdReferenceTargetsPerId;
+const MAX_TARGET_HTML_SNIPPET_LENGTH = BOUNDS.maxTargetHtmlSnippetLength;
 
 const SKIPPED_TEXT_TAGS = new Set([
   'iframe',

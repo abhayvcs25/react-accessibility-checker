@@ -594,11 +594,134 @@ function getDocumentTitle(content: string): string | null {
   return title || null
 }
 
+const DENY_SEGMENTS = new Set([
+  '.git', '.svn', '.hg',
+  'node_modules', 'bower_components', 'vendor',
+  'dist', 'build', 'coverage', '.next', '.turbo', '.cache', 'out',
+  'secrets', 'private',
+])
+
+const SECRET_FILENAMES = new Set([
+  'credentials.json', 'id_rsa', 'id_dsa',
+])
+
+const SECRET_EXTENSIONS = [
+  '.pem', '.key', '.p12', '.pfx', '.cer', '.crt',
+]
+
+const DENY_EXTENSIONS = new Set([
+  ...SECRET_EXTENSIONS,
+  '.map', '.lock',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.wasm', '.zip', '.tar', '.gz', '.7z', '.rar',
+  '.md', '.markdown', '.txt', '.log',
+  '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf',
+])
+
+const ALLOWED_EXTENSIONS = new Set([
+  '.jsx', '.tsx', '.js', '.ts', '.html', '.htm',
+])
+
+const CONFIG_FILENAMES = new Set(['tsconfig.json', 'jsconfig.json'])
+
+function isHostilePathClient(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return true
+  // Check NUL and control characters
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f) return true
+  }
+  // Absolute paths (POSIX / or Windows \)
+  if (raw.startsWith('/') || raw.startsWith('\\')) return true
+  // UNC paths
+  if (raw.startsWith('//') || raw.startsWith('\\\\')) return true
+  // Drive letter prefix (e.g. C:, D:)
+  if (/^[a-zA-Z]:/.test(raw)) return true
+
+  // Traversal check
+  const replaced = raw.replace(/\\/g, '/')
+  if (replaced.startsWith('../') || replaced === '..') return true
+  const segments = replaced.split('/')
+  if (segments.some((s) => s === '..')) return true
+
+  return false
+}
+
+function normalizePathClient(raw: string): string | null {
+  if (isHostilePathClient(raw)) return null
+
+  const replaced = raw.replace(/\\/g, '/')
+  const segments = replaced.split('/').filter((s) => s.length > 0 && s !== '.')
+
+  if (segments.length === 0) return null
+  if (segments.length > 16) return null
+
+  const normalized = segments.join('/')
+  if (normalized.length > 240) return null
+  if (normalized.includes('\\')) return null
+
+  return normalized
+}
+
+function classifyFileClient(relativePath: string): { status: ProjectFileManifest['status']; reason: string | null } {
+  const segments = relativePath.split('/')
+  const filename = segments[segments.length - 1] ?? ''
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : ''
+
+  for (const segment of segments) {
+    const lower = segment.toLowerCase()
+    if (lower.startsWith('.env')) return { status: 'ignored', reason: 'secret-or-dependency-path' }
+    if (DENY_SEGMENTS.has(lower)) return { status: 'ignored', reason: 'secret-or-dependency-path' }
+  }
+
+  const lowerFilename = filename.toLowerCase()
+  if (SECRET_FILENAMES.has(lowerFilename)) return { status: 'ignored', reason: 'secret-file' }
+  for (const secretExt of SECRET_EXTENSIONS) {
+    if (lowerFilename.endsWith(secretExt)) return { status: 'ignored', reason: 'secret-file' }
+  }
+  for (const deniedExt of DENY_EXTENSIONS) {
+    if (lowerFilename.endsWith(deniedExt)) return { status: 'ignored', reason: 'unsupported-extension' }
+  }
+
+  if (CONFIG_FILENAMES.has(filename.toLowerCase())) return { status: 'accepted', reason: null }
+  if (ALLOWED_EXTENSIONS.has(ext.toLowerCase())) return { status: 'accepted', reason: null }
+
+  return { status: 'ignored', reason: 'unsupported-extension' }
+}
+
+type ProjectFileManifest = {
+  relativePath: string
+  status: 'accepted' | 'ignored' | 'rejected'
+  byteLength: number
+  reason: string | null
+}
+
+type ProjectIntakeResponse = {
+  snapshotId: string | null
+  projectLabel: string | null
+  completeness: 'complete' | 'partial'
+  files: ProjectFileManifest[]
+  counts: {
+    selected: number
+    accepted: number
+    ignored: number
+    rejected: number
+    omitted: number
+  }
+  omissionReasons: string[]
+}
+
+type Mode = 'html' | 'react' | 'project'
+
 function App() {
-  const [mode, setMode] = useState<'html' | 'react'>('html')
+  const [mode, setMode] = useState<Mode>('html')
   const [selection, setSelection] = useState<SelectionState>(EMPTY_STATE)
   const [report, setReport] = useState<AnalyzeResponse | null>(null)
   const [sourceReport, setSourceReport] = useState<SourceAnalyzeResponse | null>(null)
+  const [projectManifest, setProjectManifest] = useState<ProjectIntakeResponse | null>(null)
+  const [selectedProjectFiles, setSelectedProjectFiles] = useState<File[]>([])
+  const [projectLabel, setProjectLabel] = useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [analysisCancelled, setAnalysisCancelled] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
@@ -609,7 +732,7 @@ function App() {
   const analysisInFlight = useRef(false)
   const analysisController = useRef<AbortController | null>(null)
 
-  function handleModeSwitch(newMode: 'html' | 'react') {
+  function handleModeSwitch(newMode: Mode) {
     if (newMode === mode) return
     analysisController.current?.abort()
     readId.current += 1
@@ -617,6 +740,9 @@ function App() {
     setSelection(EMPTY_STATE)
     setReport(null)
     setSourceReport(null)
+    setProjectManifest(null)
+    setSelectedProjectFiles([])
+    setProjectLabel(null)
     setAnalysisCancelled(false)
     setAnalysisError(null)
     setCopyPromptFeedback(null)
@@ -678,6 +804,175 @@ function App() {
         status: 'error',
         message: `Couldn't read ${file.name}. Try selecting another ${mode === 'html' ? 'HTML' : 'React'} file.`,
       })
+    }
+  }
+
+  async function handleProjectFolderChange(event: ChangeEvent<HTMLInputElement>) {
+    const rawFiles = event.currentTarget.files
+    if (!rawFiles || rawFiles.length === 0) {
+      return
+    }
+    const fileArray = Array.from(rawFiles)
+    event.currentTarget.value = ''
+
+    analysisController.current?.abort()
+    const currentReadId = ++readId.current
+    setReport(null)
+    setSourceReport(null)
+    setProjectManifest(null)
+    setSelectedProjectFiles([])
+    setProjectLabel(null)
+    setAnalysisCancelled(false)
+    setAnalysisError(null)
+    setCopyPromptFeedback(null)
+
+    const hasRelativePaths = fileArray.some((f) => f.webkitRelativePath && f.webkitRelativePath.trim() !== '')
+
+    if (!hasRelativePaths) {
+      setProjectManifest({
+        snapshotId: null,
+        projectLabel: null,
+        completeness: 'partial',
+        files: [],
+        counts: { selected: 0, accepted: 0, ignored: 0, rejected: 0, omitted: 0 },
+        omissionReasons: ['not-a-directory'],
+      })
+      setAnalysisError('Please choose a folder, not individual files.')
+      return
+    }
+
+    const folderLabel = fileArray[0]?.webkitRelativePath?.split('/')[0] || null
+    setProjectLabel(folderLabel)
+    setSelectedProjectFiles(fileArray)
+
+    const classified = fileArray.map((file) => {
+      const relativePath = file.webkitRelativePath?.trim() || file.name
+      const normalized = normalizePathClient(relativePath)
+      if (!normalized) {
+        return {
+          relativePath,
+          status: 'rejected' as const,
+          byteLength: file.size,
+          reason: 'invalid-path' as const,
+        }
+      }
+      const { status, reason } = classifyFileClient(normalized)
+      return {
+        relativePath: normalized,
+        status,
+        byteLength: file.size,
+        reason,
+      }
+    })
+
+    const seen = new Set<string>()
+    const deduped = classified.map((f) => {
+      if (seen.has(f.relativePath)) {
+        return { ...f, status: 'rejected' as const, reason: 'duplicate-path' as const }
+      }
+      seen.add(f.relativePath)
+      return f
+    })
+
+    const acceptedCount = deduped.filter((f) => f.status === 'accepted').length
+    const ignoredCount = deduped.filter((f) => f.status === 'ignored').length
+    const rejectedCount = deduped.filter((f) => f.status === 'rejected').length
+
+    setProjectManifest({
+      snapshotId: null,
+      projectLabel: folderLabel,
+      completeness: 'complete',
+      files: deduped,
+      counts: {
+        selected: fileArray.length,
+        accepted: acceptedCount,
+        ignored: ignoredCount,
+        rejected: rejectedCount,
+        omitted: 0,
+      },
+      omissionReasons: [],
+    })
+
+    console.log(`[project-intake] Selected folder "${folderLabel || 'unnamed'}" with ${fileArray.length} files`)
+
+    if (currentReadId !== readId.current) return
+  }
+
+  async function handleProjectIntake() {
+    if (!projectManifest || projectManifest.files.length === 0 || selectedProjectFiles.length === 0) return
+
+    const currentReadId = ++readId.current
+    analysisController.current?.abort()
+    const controller = new AbortController()
+    analysisController.current = controller
+    analysisInFlight.current = true
+    setIsAnalyzing(true)
+    setAnalysisCancelled(false)
+    setAnalysisError(null)
+
+    try {
+      const formData = new FormData()
+      if (projectLabel) {
+        formData.append('projectLabel', projectLabel)
+      }
+
+      // Filter out secrets and any non-accepted files before sending to server.
+      // Only 'accepted' files are uploaded; ignored/rejected/invalid/duplicate are excluded.
+      const filesToSend = selectedProjectFiles.filter((_file, index) => {
+        const manifestEntry = projectManifest?.files[index]
+        return manifestEntry?.status === 'accepted'
+      })
+
+      for (const file of filesToSend) {
+        const relativePath = file.webkitRelativePath?.trim() || file.name
+        formData.append('files', file, relativePath)
+      }
+
+      console.log(`[project-intake] Uploading ${filesToSend.length} files to /api/project-intake...`)
+
+      const response = await fetch('http://localhost:3001/api/project-intake', {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      })
+
+      let payload: unknown
+      try {
+        payload = await response.json()
+      } catch {
+        payload = undefined
+      }
+
+      if (!response.ok) {
+        const message =
+          isRecord(payload) && typeof payload.error === 'string'
+            ? payload.error
+            : `The backend returned HTTP ${response.status}.`
+        setAnalysisError(message)
+        return
+      }
+
+      if (currentReadId !== readId.current) return
+
+      const serverManifest = payload as ProjectIntakeResponse
+      setProjectManifest(serverManifest)
+      console.log('[project-intake] Server response:', serverManifest)
+    } catch {
+      if (controller.signal.aborted) {
+        if (currentReadId === readId.current) {
+          setAnalysisCancelled(true)
+        }
+      } else if (currentReadId === readId.current) {
+        setAnalysisError(
+          'Could not reach the analysis backend at localhost:3001. Make sure it is running, then try again.',
+        )
+      }
+    } finally {
+      if (analysisController.current === controller) {
+        analysisController.current = null
+      }
+      analysisInFlight.current = false
+      setIsAnalyzing(false)
     }
   }
 
@@ -1106,7 +1401,11 @@ function App() {
           <span>AccessCheck</span>
         </div>
         <span className="stage-label">
-          {mode === 'html' ? 'HTML checker' : 'React source checker'}
+          {mode === 'html'
+            ? 'HTML checker'
+            : mode === 'react'
+              ? 'React source checker'
+              : 'React project checker'}
         </span>
       </header>
 
@@ -1130,94 +1429,260 @@ function App() {
           >
             React Source (.jsx, .tsx)
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'project'}
+            className={`mode-btn ${mode === 'project' ? 'mode-btn-active' : ''}`}
+            onClick={() => handleModeSwitch('project')}
+          >
+            React Project (folder)
+          </button>
         </div>
 
         <div className="intro">
           <p className="eyebrow">
-            {mode === 'html' ? 'A clearer place to begin' : 'Static source accessibility'}
+            {mode === 'html'
+              ? 'A clearer place to begin'
+              : mode === 'react'
+                ? 'Static source accessibility'
+                : 'Project folder accessibility'}
           </p>
           <h1 id="page-title">
-            {mode === 'html' ? 'Check an HTML file' : 'Check a React source file'}
+            {mode === 'html'
+              ? 'Check an HTML file'
+              : mode === 'react'
+                ? 'Check a React source file'
+                : 'Check a React project folder'}
           </h1>
           <p className="intro-copy">
             {mode === 'html'
               ? 'File selection and preview stay in your browser. When you choose to analyze, the HTML contents are sent to the local analysis backend at localhost:3001.'
-              : 'Static AST-based accessibility analysis for one React source file. Source is read in your browser; when you click Analyze, bounded excerpts are assessed by the local backend and configured AI models. IBM Equal Access is not run for source input.'}
+              : mode === 'react'
+                ? 'Static AST-based accessibility analysis for one React source file. Source is read in your browser; when you click Analyze, bounded excerpts are assessed by the local backend and configured AI models. IBM Equal Access is not run for source input.'
+                : 'Select a React project folder. The folder structure is indexed locally. File contents are sent to the backend only when you start analysis. Eligible HTML projections go to the local IBM checker; bounded evidence excerpts go to configured AI models. Secrets and dependencies are filtered out.'}
           </p>
         </div>
 
-        <section className="file-panel" aria-labelledby="file-panel-title">
-          <div className="panel-heading">
-            <span className="step-number" aria-hidden="true">
-              01
-            </span>
-            <div>
-              <h2 id="file-panel-title">Select your file</h2>
-              <p>{mode === 'html' ? 'HTML documents only' : 'React JSX / TSX only'}</p>
-            </div>
-          </div>
+        {mode !== 'project' && (
+            <section className="file-panel" aria-labelledby="file-panel-title">
+              <div className="panel-heading">
+                <span className="step-number" aria-hidden="true">01</span>
+                <div>
+                  <h2 id="file-panel-title">Select your file</h2>
+                  <p>
+                    {mode === 'html'
+                      ? 'HTML documents only'
+                      : mode === 'react'
+                        ? 'React JSX / TSX only'
+                        : 'React project folder'}
+                  </p>
+                </div>
+              </div>
 
-          <div className="file-picker-area">
-            <div className="file-icon" aria-hidden="true">
-              <svg viewBox="0 0 48 48" fill="none">
-                <path
-                  d="M13 5.75h14l9 9v27.5H13a3 3 0 0 1-3-3v-30a3.5 3.5 0 0 1 3-3.5Z"
-                  stroke="currentColor"
-                  strokeWidth="2"
+              <div className="file-picker-area">
+                <div className="file-icon" aria-hidden="true">
+                  <svg viewBox="0 0 48 48" fill="none">
+                    <path
+                      d="M13 5.75h14l9 9v27.5H13a3 3 0 0 1-3-3v-30a3.5 3.5 0 0 1 3-3.5Z"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <path
+                      d="M27 6v10h9M17 25h15M17 31h15M17 37h9"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+                <h3>
+                  {selection.status === 'selected'
+                    ? 'Your file is ready'
+                    : selection.status === 'reading'
+                      ? 'Reading your file'
+                      : mode === 'html'
+                        ? 'Choose an HTML file'
+                        : 'Choose a React .jsx or .tsx file'}
+                </h3>
+                <p className="picker-copy">
+                  {selection.status === 'reading'
+                    ? `Reading ${selection.name} on this device…`
+                    : mode === 'html'
+                      ? 'Select a .html or .htm file from your device.'
+                      : 'Select a .jsx or .tsx source file from your device.'}
+                </p>
+
+                <div className="picker-control">
+                  <input
+                    className="file-input"
+                    id="source-file-input"
+                    type="file"
+                    accept={mode === 'html' ? '.html,.htm,text/html' : '.jsx,.tsx'}
+                    aria-describedby="file-help"
+                    onChange={handleFileChange}
+                  />
+                  <label className="button button-primary" htmlFor="source-file-input">
+                    {selection.status === 'selected'
+                      ? 'Choose another file'
+                      : 'Browse files'}
+                  </label>
+                </div>
+                <p className="file-help" id="file-help">
+                  {mode === 'html' ? 'Accepted formats: .html, .htm' : 'Accepted formats: .jsx, .tsx'}
+                </p>
+              </div>
+
+              <p className="privacy-note">
+                <span className="privacy-dot" aria-hidden="true" />
+                {mode === 'html'
+                  ? 'Read locally; HTML is sent to localhost:3001 only when you analyze.'
+                  : 'Read locally; source is analyzed only when you start analysis. Bounded source excerpts may be sent to configured external AI model providers. No credentials or private model configurations are exposed.'}
+              </p>
+            </section>
+          )}
+
+        {mode === 'project' && (
+          <section className="file-panel" aria-labelledby="project-panel-title">
+            <div className="panel-heading">
+              <span className="step-number" aria-hidden="true">01</span>
+              <div>
+                <h2 id="project-panel-title">Select project folder</h2>
+                <p>React project folder</p>
+              </div>
+            </div>
+
+            <div className="file-picker-area">
+              <div className="file-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none">
+                  <path
+                    d="M13 5.75h14l9 9v27.5H13a3 3 0 0 1-3-3v-30a3.5 3.5 0 0 1 3-3.5Z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  />
+                  <path
+                    d="M27 6v10h9M17 25h15M17 31h15M17 37h9"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+              <h3>
+                {projectManifest && projectManifest.files.length > 0
+                  ? `Project ready: ${projectManifest.files.length} files`
+                  : 'Choose a React project folder'}
+              </h3>
+              <p className="picker-copy">
+                Select a folder containing your React project. Files are classified locally before upload.
+              </p>
+
+              <div className="picker-control">
+                <input
+                  className="file-input"
+                  id="project-folder-input"
+                  type="file"
+                  // @ts-expect-error webkitdirectory is non-standard but widely supported
+                  webkitdirectory=""
+                  directory=""
+                  multiple
+                  aria-label="React project folder"
+                  aria-describedby="project-file-help"
+                  onChange={handleProjectFolderChange}
                 />
-                <path
-                  d="M27 6v10h9M17 25h15M17 31h15M17 37h9"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+                <label className="button button-primary" htmlFor="project-folder-input">
+                  {projectManifest && projectManifest.files.length > 0
+                    ? 'Choose another folder'
+                    : 'Browse for folder'}
+                </label>
+              </div>
+              <p className="file-help" id="project-file-help">
+                Accepted: .jsx, .tsx, .js, .ts, .html, .htm, tsconfig.json, jsconfig.json. Secrets, node_modules, dist, build, and other build artifacts are filtered out.
+              </p>
             </div>
-            <h3>
-              {selection.status === 'selected'
-                ? 'Your file is ready'
-                : selection.status === 'reading'
-                  ? 'Reading your file'
-                  : mode === 'html'
-                    ? 'Choose an HTML file'
-                    : 'Choose a React .jsx or .tsx file'}
-            </h3>
-            <p className="picker-copy">
-              {selection.status === 'reading'
-                ? `Reading ${selection.name} on this device…`
-                : mode === 'html'
-                  ? 'Select a .html or .htm file from your device.'
-                  : 'Select a .jsx or .tsx source file from your device.'}
-            </p>
 
-            <div className="picker-control">
-              <input
-                className="file-input"
-                id="source-file-input"
-                type="file"
-                accept={mode === 'html' ? '.html,.htm,text/html' : '.jsx,.tsx'}
-                aria-describedby="file-help"
-                onChange={handleFileChange}
-              />
-              <label className="button button-primary" htmlFor="source-file-input">
-                {selection.status === 'selected'
-                  ? 'Choose another file'
-                  : 'Browse files'}
-              </label>
+            {projectManifest && projectManifest.files.length > 0 && (
+              <div className="project-manifest-summary">
+                <div className="manifest-counts">
+                  <div className="count-item">
+                    <span className="count-label">Selected</span>
+                    <span className="count-value">{projectManifest.counts.selected}</span>
+                  </div>
+                  <div className="count-item">
+                    <span className="count-label">Accepted</span>
+                    <span className="count-value accepted">{projectManifest.counts.accepted}</span>
+                  </div>
+                  <div className="count-item">
+                    <span className="count-label">Ignored</span>
+                    <span className="count-value ignored">{projectManifest.counts.ignored}</span>
+                  </div>
+                  <div className="count-item">
+                    <span className="count-label">Rejected</span>
+                    <span className="count-value rejected">{projectManifest.counts.rejected}</span>
+                  </div>
+                  <div className="count-item">
+                    <span className="count-label">Omitted</span>
+                    <span className="count-value omitted">{projectManifest.counts.omitted}</span>
+                  </div>
+                </div>
+                {projectManifest.snapshotId && (
+                  <p className="partial-notice" style={{ borderColor: 'var(--design-color-border)', background: 'var(--design-color-surface-subtle)', color: 'var(--design-color-ink)', wordBreak: 'break-all' }}>
+                    Snapshot ID: <code>{projectManifest.snapshotId}</code>
+                  </p>
+                )}
+                {projectManifest.completeness === 'partial' && projectManifest.omissionReasons.length > 0 && (
+                  <p className="partial-notice">
+                    Incomplete: {projectManifest.omissionReasons.join(', ')}
+                  </p>
+                )}
+                <details className="manifest-file-list">
+                  <summary>File list ({projectManifest.files.length})</summary>
+                  <ul className="file-list">
+                    {projectManifest.files.map((file, index) => (
+                      <li key={index} className={`file-list-item ${file.status}`}>
+                        <code>{file.relativePath}</code>
+                        <span className="file-status">{file.status}</span>
+                        {file.reason && <span className="file-reason">({file.reason})</span>}
+                        <span className="file-size">{formatFileSize(file.byteLength)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            )}
+
+            <p className="analysis-note">
+              Folder selection is local. When analysis is available, eligible HTML projections will be sent to the local IBM checker and bounded evidence excerpts to configured AI models.
+            </p>
+            <div className="analysis-actions">
+              {isAnalyzing ? (
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={handleCancelAnalysis}
+                >
+                  Stop waiting
+                </button>
+              ) : (
+                <button
+                  className="button button-primary"
+                  type="button"
+                  onClick={handleProjectIntake}
+                  disabled={!projectManifest || projectManifest.files.length === 0}
+                >
+                  Index project
+                </button>
+              )}
             </div>
-            <p className="file-help" id="file-help">
-              {mode === 'html' ? 'Accepted formats: .html, .htm' : 'Accepted formats: .jsx, .tsx'}
-            </p>
-          </div>
-
-          <p className="privacy-note">
-            <span className="privacy-dot" aria-hidden="true" />
-            {mode === 'html'
-              ? 'Read locally; HTML is sent to localhost:3001 only when you analyze.'
-              : 'Read locally; source is analyzed only when you start analysis. Bounded source excerpts may be sent to configured external AI model providers. No credentials or private model configurations are exposed.'}
-          </p>
-        </section>
+            {isAnalyzing && (
+              <p className="analysis-note">
+                Stopping closes the browser request; the backend may continue processing.
+              </p>
+            )}
+          </section>
+        )}
 
         {selection.status === 'selected' && (
           <section className="file-details" aria-labelledby="details-title">
@@ -1303,7 +1768,9 @@ function App() {
             <span className="loading-indicator" aria-hidden="true" />
             {analysisCancelled
               ? 'Stopped waiting in this browser. The server may continue processing; no report will be shown for this request.'
-              : 'Analyzing HTML with the accessibility checker…'}
+              : mode === 'project'
+                ? 'Indexing project folder…'
+                : 'Analyzing HTML with the accessibility checker…'}
           </p>
         )}
 

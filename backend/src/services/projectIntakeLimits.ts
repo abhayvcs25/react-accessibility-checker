@@ -1,12 +1,14 @@
+import { BOUNDS } from '../config/bounds.js';
+
 export const PROJECT_INTAKE_LIMITS = {
-  maxAcceptedFiles: 200,
-  maxInspectedFiles: 500,
-  maxFileBytes: 512_000,
-  maxTotalAcceptedBytes: 4_000_000,
-  maxRelativePathLength: 240,
-  maxPathSegments: 16,
-  maxProjectLabelLength: 120,
-  multipartTransportCeiling: 10_000_000,
+  maxAcceptedFiles: BOUNDS.maxAcceptedFiles,
+  maxInspectedFiles: BOUNDS.maxInspectedFiles,
+  maxFileBytes: BOUNDS.maxFileBytes,
+  maxTotalAcceptedBytes: BOUNDS.maxTotalAcceptedBytes,
+  maxRelativePathLength: BOUNDS.maxRelativePathLength,
+  maxPathSegments: BOUNDS.maxPathSegments,
+  maxProjectLabelLength: BOUNDS.maxProjectLabelLength,
+  multipartTransportCeiling: BOUNDS.multipartTransportCeiling,
 } as const;
 
 export const ALLOWED_EXTENSIONS = new Set([

@@ -20,6 +20,7 @@ import { runContextualAssessmentJobs } from '../services/contextualAssessmentSch
 import { aggregateAdvisoryReport } from '../services/reportAggregation.js';
 import { SOURCE_RULE_POLICIES } from '../services/reactSourceRuleMap.js';
 import { getRulesForTargetKind } from '../services/reactSourceRuleMap.js';
+import { ValidationError, UpstreamError } from '../errors.js';
 
 const router = Router();
 
@@ -73,13 +74,13 @@ router.post(
     next: NextFunction,
   ): Promise<void> => {
     if (!req.is('application/json')) {
-      res.status(415).json({ error: 'Content-Type must be application/json' });
+      res.status(415).json({ error: 'Content-Type must be application/json', code: 'UNSUPPORTED_MEDIA_TYPE' });
       return;
     }
 
     const body: unknown = req.body;
     if (!isRecord(body)) {
-      res.status(400).json({ error: 'Request body must be a JSON object' });
+      next(new ValidationError('Request body must be a JSON object'));
       return;
     }
 
@@ -88,23 +89,17 @@ router.post(
       typeof body.filename === 'string' ? body.filename.trim() : '';
 
     if (typeof source !== 'string' || source.length === 0) {
-      res.status(400).json({ error: 'source must be a non-empty string' });
+      next(new ValidationError('source must be a non-empty string'));
       return;
     }
 
     if (!filename || !/\.(jsx|tsx)$/i.test(filename)) {
-      res.status(400).json({
-        error: 'filename must end in .jsx or .tsx',
-        code: 'invalid-extension',
-      });
+      next(new ValidationError('filename must end in .jsx or .tsx', { field: 'filename', reason: 'invalid-extension' }));
       return;
     }
 
     if (source.length > MAX_SOURCE_LENGTH) {
-      res.status(413).json({
-        error: `Source file exceeds maximum size of ${MAX_SOURCE_LENGTH} characters.`,
-        code: 'size-exceeded',
-      });
+      next(new ValidationError(`Source file exceeds maximum size of ${MAX_SOURCE_LENGTH} characters.`, { field: 'source', reason: 'size-exceeded' }));
       return;
     }
 
@@ -118,7 +113,7 @@ router.post(
           : extraction.code === 'invalid-extension' ||
               extraction.code === 'invalid-filename' ? 400
           : 422;
-        res.status(statusCode).json({ error: extraction.message, code: extraction.code });
+        next(new ValidationError(extraction.message, { code: extraction.code }));
         return;
       }
 
@@ -138,10 +133,11 @@ router.post(
           { sourceKind: 'react-source-file' },
         );
         aiOutcomes = execution.outcomes;
-      } catch {
+      } catch (error) {
         aiSchedulerFailed = true;
         console.error(
           'Source: Contextual AI scheduling failed; source extraction results are unaffected.',
+          { error: error instanceof Error ? error.message : String(error) },
         );
       }
 
@@ -196,7 +192,7 @@ router.post(
 
       res.status(200).json(response);
     } catch (error) {
-      next(error);
+      next(new UpstreamError('Source analysis failed', { originalMessage: error instanceof Error ? error.message : String(error) }));
     }
   },
 );

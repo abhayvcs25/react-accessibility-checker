@@ -95,7 +95,9 @@ describe('POST /api/project-intake', () => {
       const text = await res.text();
       expect(text).not.toContain(secretContent);
       const body = JSON.parse(text);
-      expect(body.code).toBe('invalid-path');
+      // Error handler wraps validation errors with VALIDATION_ERROR code and original code in details
+      expect(body.code).toBe('VALIDATION_ERROR');
+      expect(body.details?.code).toBe('invalid-path');
     }
   });
 

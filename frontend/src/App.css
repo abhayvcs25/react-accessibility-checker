@@ -1042,3 +1042,171 @@
   background: var(--design-color-surface-subtle);
   font-weight: 750;
 }
+
+/* Project Manifest Styles */
+.project-manifest-summary {
+  margin-top: var(--design-space-4);
+  padding: var(--design-space-4);
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface);
+  box-shadow: var(--design-shadow-hard);
+}
+
+.manifest-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--design-space-3);
+  margin-bottom: var(--design-space-3);
+}
+
+.count-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 80px;
+  padding: var(--design-space-3);
+  border: 1px solid var(--design-color-border);
+  background: var(--design-color-background);
+  font-family: var(--design-font-mono);
+}
+
+.count-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--design-color-muted);
+  margin-bottom: var(--design-space-1);
+}
+
+.count-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--design-color-ink);
+}
+
+.count-value.accepted {
+  color: var(--design-color-success);
+}
+
+.count-value.ignored {
+  color: var(--design-color-warning);
+}
+
+.count-value.rejected {
+  color: var(--design-color-error);
+}
+
+.count-value.omitted {
+  color: var(--design-color-muted);
+}
+
+.partial-notice {
+  margin: 0 0 var(--design-space-3);
+  padding: var(--design-space-2) var(--design-space-3);
+  border: 1px solid var(--design-color-warning);
+  background: var(--design-color-warning-background);
+  color: var(--design-color-warning);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.manifest-file-list {
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-background);
+}
+
+.manifest-file-list summary {
+  font-weight: 750;
+  cursor: pointer;
+  padding: var(--design-space-2) var(--design-space-3);
+  border-bottom: var(--design-border-width) solid var(--design-color-border);
+}
+
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.file-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--design-space-3);
+  padding: var(--design-space-2) var(--design-space-3);
+  border-bottom: 1px solid var(--design-color-border);
+  font-size: 12px;
+}
+
+.file-list-item:last-child {
+  border-bottom: none;
+}
+
+.file-list-item code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--design-font-mono);
+  font-size: 11px;
+}
+
+.file-status {
+  padding: var(--design-space-1) var(--design-space-2);
+  border: 1px solid var(--design-color-border);
+  background: var(--design-color-surface);
+  color: var(--design-color-ink);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.file-status.accepted {
+  border-color: var(--design-color-success);
+  background: var(--design-color-success-background);
+  color: var(--design-color-success);
+}
+
+.file-status.ignored {
+  border-style: dashed;
+  background: var(--design-color-warning-background);
+  color: var(--design-color-warning);
+}
+
+.file-status.rejected {
+  border-color: var(--design-color-error);
+  background: var(--design-color-error-background);
+  color: var(--design-color-error);
+}
+
+.file-reason {
+  color: var(--design-color-muted);
+  font-size: 10px;
+  font-family: var(--design-font-mono);
+}
+
+.file-size {
+  color: var(--design-color-muted);
+  font-family: var(--design-font-mono);
+  font-size: 10px;
+}
+
+@media (max-width: 640px) {
+  .count-item {
+    min-width: 70px;
+    padding: var(--design-space-2);
+  }
+
+  .file-list-item {
+    flex-wrap: wrap;
+    gap: var(--design-space-1);
+  }
+
+  .file-list-item code {
+    order: -1;
+    width: 100%;
+    margin-bottom: var(--design-space-1);
+  }
+}

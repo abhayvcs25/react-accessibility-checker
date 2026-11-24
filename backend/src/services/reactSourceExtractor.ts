@@ -48,18 +48,19 @@ import type {
   ReactTextContentTarget,
 } from '../types/reactSource.js';
 import { REACT_SOURCE_SCHEMA_VERSION } from '../types/reactSource.js';
+import { BOUNDS } from '../config/bounds.js';
 
 // ---------------------------------------------------------------------------
-// Bounds
+// Bounds (from centralized config)
 // ---------------------------------------------------------------------------
 
-const MAX_FILE_SIZE_BYTES = 512_000; // 500 KB
-const MAX_FILENAME_LENGTH = 255;
-const MAX_ELEMENTS = 500;
-const MAX_TEXT_LENGTH = 500;
-const MAX_ATTRIBUTE_VALUE_LENGTH = 250;
-const MAX_SOURCE_EXCERPT_LENGTH = 500;
-const MAX_ANCESTORS = 4;
+const MAX_FILE_SIZE_BYTES = BOUNDS.maxFileBytes;
+const MAX_FILENAME_LENGTH = BOUNDS.maxFilenameLength;
+const MAX_ELEMENTS = BOUNDS.maxElements;
+const MAX_TEXT_LENGTH = BOUNDS.maxTextLength;
+const MAX_ATTRIBUTE_VALUE_LENGTH = BOUNDS.maxAttributeValueLength;
+const MAX_SOURCE_EXCERPT_LENGTH = BOUNDS.maxSourceExcerptLength;
+const MAX_ANCESTORS = BOUNDS.maxAncestors;
 
 // ---------------------------------------------------------------------------
 // Utility helpers

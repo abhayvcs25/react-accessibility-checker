@@ -101,6 +101,7 @@ describe('POST /api/analyze', () => {
     expect(response.status).toBe(415);
     expect(await response.json()).toEqual({
       error: 'Content-Type must be application/json',
+      code: 'UNSUPPORTED_MEDIA_TYPE',
     });
     expect(analyzeHtml).not.toHaveBeenCalled();
   });
@@ -125,6 +126,7 @@ describe('POST /api/analyze', () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       error: 'Invalid JSON in request body',
+      code: 'INVALID_JSON',
     });
   });
 
@@ -136,7 +138,7 @@ describe('POST /api/analyze', () => {
     const response = await post(oversizedBody);
 
     expect(response.status).toBe(413);
-    expect(await response.json()).toEqual({ error: 'Payload too large' });
+    expect(await response.json()).toEqual({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' });
   });
 
   it('forwards service failures without exposing internal details', async () => {
@@ -148,10 +150,11 @@ describe('POST /api/analyze', () => {
         JSON.stringify({ html: '<main></main>', filename: 'page.html' }),
       );
 
-      expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({
-        error: 'Internal server error',
-      });
+      expect(response.status).toBe(502);
+      const body = await response.json();
+      expect(body.error).toBe('Analysis failed');
+      expect(body.code).toBe('UPSTREAM_ERROR');
+      expect(body.details).toEqual({ originalMessage: 'private service detail' });
     } finally {
       consoleError.mockRestore();
     }

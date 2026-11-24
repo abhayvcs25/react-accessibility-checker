@@ -1,28 +1,55 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { ErrorResponse } from '../types/checker.js';
+import { isAppError, toAppError } from '../errors.js';
+import logger from '../logger.js';
 
 /**
  * Express global error handler.
  * Catches errors thrown or passed via next(err) in route handlers.
+ * Maps known error codes to appropriate HTTP status and client-safe messages.
  */
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response<ErrorResponse>,
   _next: NextFunction,
 ): void {
+  const reqId = (req as Request & { reqId?: string }).reqId ?? 'unknown';
+
   // Handle Express JSON parse errors (malformed JSON, wrong content-type)
-  if (isJsonParseError(err)) {
-    if (err.type === 'entity.too.large') {
-      res.status(413).json({ error: 'Payload too large' });
-      return;
-    }
-    res.status(400).json({ error: 'Invalid JSON in request body' });
+  // Check for AppError first to avoid false positives on our error classes
+  if (isAppError(err)) {
+    const appError = err;
+    logger.warn({ reqId, code: appError.code, status: appError.status, message: appError.message, details: appError.details }, 'Request error');
+    res.status(appError.status).json({
+      error: appError.message,
+      code: appError.code,
+      ...(appError.details ? { details: appError.details } : {}),
+    });
     return;
   }
 
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  if (isJsonParseError(err)) {
+    if (err.type === 'entity.too.large') {
+      logger.warn({ reqId, type: err.type }, 'Payload too large');
+      res.status(413).json({ error: 'Payload too large', code: 'PAYLOAD_TOO_LARGE' });
+      return;
+    }
+    logger.warn({ reqId }, 'Invalid JSON in request body');
+    res.status(400).json({ error: 'Invalid JSON in request body', code: 'INVALID_JSON' });
+    return;
+  }
+
+  const appError = toAppError(err);
+
+  // Log error with context
+  logger.error({ reqId, code: appError.code, status: appError.status, message: appError.message, details: appError.details, stack: err instanceof Error ? err.stack : undefined }, 'Unhandled error');
+
+  res.status(appError.status).json({
+    error: appError.message,
+    code: appError.code,
+    ...(appError.details ? { details: appError.details } : {}),
+  });
 }
 
 interface JsonParseError {

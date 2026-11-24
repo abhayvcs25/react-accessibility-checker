@@ -1,23 +1,30 @@
 import { createServer } from 'node:http';
 import cors from 'cors';
 import express from 'express';
-import { MAX_BODY_SIZE, PORT } from './config.js';
+import { MAX_BODY_SIZE, PORT, ALLOWED_ORIGINS } from './config.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
+import { analyzeRateLimiter, analyzeSourceRateLimiter, projectIntakeRateLimiter } from './middleware/rateLimit.js';
 import analyzeRouter from './routes/analyze.js';
 import analyzeSourceRouter from './routes/analyzeSource.js';
 import projectIntakeRouter from './routes/projectIntake.js';
 import aiRouter from './routes/ai.js';
 import { closeChecker } from './services/checker.js';
+import logger from './logger.js';
 
 const app = express();
 
+app.use(requestIdMiddleware);
 app.use(
   cors({
-    origin: 'http://localhost:5173',
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST', 'OPTIONS'],
   }),
 );
 app.use(express.json({ limit: MAX_BODY_SIZE }));
+app.use('/api/analyze', analyzeRateLimiter);
+app.use('/api/analyze-source', analyzeSourceRateLimiter);
+app.use('/api/project-intake', projectIntakeRateLimiter);
 app.use(analyzeRouter);
 app.use(analyzeSourceRouter);
 app.use(projectIntakeRouter);
@@ -31,7 +38,7 @@ const server = createServer(app);
 let isShuttingDown = false;
 
 server.on('error', (error: Error) => {
-  console.error('Backend server error:', error);
+  logger.error({ error: error.message, stack: error.stack }, 'Backend server error');
   process.exitCode = 1;
 });
 
@@ -39,7 +46,7 @@ server.listen(PORT, () => {
   const address = server.address();
   if (address && typeof address !== 'string') {
     const { address: host, port } = address;
-    console.log(`Backend server listening at http://${host}:${port}`);
+    logger.info({ host, port }, `Backend server listening at http://${host}:${port}`);
   }
 });
 
@@ -48,7 +55,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     return;
   }
   isShuttingDown = true;
-  console.log(`Received ${signal}; shutting down backend server.`);
+  logger.info({ signal }, 'Shutting down backend server');
 
   let shutdownFailed = false;
   try {
@@ -62,14 +69,14 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
       });
     });
   } catch (error) {
-    console.error('Failed to close backend HTTP server:', error);
+    logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to close backend HTTP server');
     shutdownFailed = true;
   }
 
   try {
     await closeChecker();
   } catch (error) {
-    console.error('Failed to close accessibility checker:', error);
+    logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Failed to close accessibility checker');
     shutdownFailed = true;
   }
 
@@ -80,7 +87,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 
 function handleSignal(signal: NodeJS.Signals): void {
   void shutdown(signal).catch((error: unknown) => {
-    console.error('Unexpected error during backend shutdown:', error);
+    logger.error({ error: error instanceof Error ? error.message : String(error) }, 'Unexpected error during backend shutdown');
     process.exitCode = 1;
   });
 }
