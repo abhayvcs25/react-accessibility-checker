@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "updated": "2026-11-24",
+  "providers": {
+    "groq": {
+      "id": "groq",
+      "credentialEnv": ["GROQ_API_KEY"],
+      "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+      "endpointKind": "openai-compatible",
+      "publishedLimits": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000,
+        "scope": "developer-plan-only-not-free-entitlement"
+      },
+      "accountVerification": {
+        "status": "verified",
+        "source": "operator_reported_dashboard",
+        "plan": "free",
+        "developerPlanActive": false,
+        "allowedModelIds": [
+          "openai/gpt-oss-120b",
+          "openai/gpt-oss-20b",
+          "qwen/qwen3.8-27b"
+        ],
+        "paymentMethod": false,
+        "purchasedCredits": false,
+        "autoRecharge": false,
+        "projectLimitsConfigured": false,
+        "developerUpgradesAvailable": false,
+        "verificationDate": "2026-11-10"
+      }
+    },
+    "cloudflare-workers-ai": {
+      "id": "cloudflare-workers-ai",
+      "credentialEnv": ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"],
+      "endpoint": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run",
+      "endpointKind": "native-ai-run",
+      "publishedLimits": {
+        "requestsPerMinute": 300,
+        "requestsPerDay": null,
+        "tokensPerMinute": null,
+        "tokensPerDay": null,
+        "sharedFreeNeuronsPerDay": 10000,
+        "freeAllocationResetsAtUtc": "00:00",
+        "paidOverageUsdPerThousandNeurons": 0.011,
+        "freeAllocationExhaustionBehavior": "provider_rejects_requests",
+        "applicationFreeAllocationGuard": "scheduler_estimate_and_ledger_reservation_not_integrated",
+        "scope": "task-level-default-and-conditional-free-allocation"
+      },
+      "accountVerification": {
+        "status": "verified",
+        "source": "operator_reported_dashboard",
+        "plan": "workers_free",
+        "workersPaidActive": false,
+        "paymentMethodOnFile": false,
+        "aiGatewayConfigured": false,
+        "aiGatewayCreditsAdded": false,
+        "freeNeuronsConsumedAtVerification": 0,
+        "verificationDate": "2026-11-10"
+      }
+    }
+  },
+  "models": {
+    "openai/gpt-oss-120b": {
+      "providerId": "groq",
+      "modelId": "openai/gpt-oss-120b",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 131072,
+      "maxInputTokens": null,
+      "maxOutputTokens": 65536,
+      "outputLimitEvidence": "provider_documented",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.15,
+        "outputUsdPerMillionTokens": 0.6,
+        "inputNeuronsPerMillionTokens": null,
+        "outputNeuronsPerMillionTokens": null
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "unconfirmed",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "documented",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "documented",
+        "functionCalling": "unconfirmed",
+        "reasoning": "unconfirmed",
+        "vision": "unconfirmed",
+        "batch": "unconfirmed",
+        "zeroDataRetention": "unconfirmed"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.",
+      "accountLimits": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
+    },
+    "openai/gpt-oss-20b": {
+      "providerId": "groq",
+      "modelId": "openai/gpt-oss-20b",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 131072,
+      "maxInputTokens": null,
+      "maxOutputTokens": 65536,
+      "outputLimitEvidence": "provider_documented",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.075,
+        "outputUsdPerMillionTokens": 0.3,
+        "inputNeuronsPerMillionTokens": null,
+        "outputNeuronsPerMillionTokens": null
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "unconfirmed",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "documented",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "documented",
+        "functionCalling": "unconfirmed",
+        "reasoning": "unconfirmed",
+        "vision": "unconfirmed",
+        "batch": "unconfirmed",
+        "zeroDataRetention": "unconfirmed"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.",
+      "accountLimits": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
+    },
+    "qwen/qwen3.8-27b": {
+      "providerId": "groq",
+      "modelId": "qwen/qwen3.8-27b",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 131072,
+      "maxInputTokens": null,
+      "maxOutputTokens": 16384,
+      "outputLimitEvidence": "provider_documented",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.8,
+        "outputUsdPerMillionTokens": 4,
+        "inputNeuronsPerMillionTokens": null,
+        "outputNeuronsPerMillionTokens": null
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "unconfirmed",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "provisional",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "provisional",
+        "functionCalling": "unconfirmed",
+        "reasoning": "unconfirmed",
+        "vision": "unconfirmed",
+        "batch": "unconfirmed",
+        "zeroDataRetention": "unconfirmed"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified and Groq documentation conflicts.",
+      "accountLimits": {
+        "requestsPerMinute": 30,
+        "requestsPerDay": 1000,
+        "tokensPerMinute": 8000,
+        "tokensPerDay": 200000
+      }
+    },
+    "@cf/zai-org/glm-4.7-flash": {
+      "providerId": "cloudflare-workers-ai",
+      "modelId": "@cf/zai-org/glm-4.7-flash",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 131072,
+      "maxInputTokens": null,
+      "maxOutputTokens": 4096,
+      "outputLimitEvidence": "operator_reported_documentation",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.0605,
+        "outputUsdPerMillionTokens": 0.4,
+        "inputNeuronsPerMillionTokens": 5500,
+        "outputNeuronsPerMillionTokens": 36400
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "provisional",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "provisional",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "provisional",
+        "functionCalling": "documented",
+        "reasoning": "documented",
+        "vision": "unconfirmed",
+        "batch": "unconfirmed",
+        "zeroDataRetention": "documented"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported Workers Free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.",
+      "accountLimits": {
+        "requestsPerMinute": null,
+        "requestsPerDay": null,
+        "tokensPerMinute": null,
+        "tokensPerDay": null
+      }
+    },
+    "@cf/nvidia/nemotron-3-120b-a12b": {
+      "providerId": "cloudflare-workers-ai",
+      "modelId": "@cf/nvidia/nemotron-3-120b-a12b",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 256000,
+      "maxInputTokens": null,
+      "maxOutputTokens": 16384,
+      "outputLimitEvidence": "operator_reported_documentation",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.5,
+        "outputUsdPerMillionTokens": 1.5,
+        "inputNeuronsPerMillionTokens": 45455,
+        "outputNeuronsPerMillionTokens": 136364
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "provisional",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "provisional",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "provisional",
+        "functionCalling": "documented",
+        "reasoning": "documented",
+        "vision": "unconfirmed",
+        "batch": "unconfirmed",
+        "zeroDataRetention": "documented"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported Workers Free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.",
+      "accountLimits": {
+        "requestsPerMinute": null,
+        "requestsPerDay": null,
+        "tokensPerMinute": null,
+        "tokensPerDay": null
+      }
+    },
+    "@cf/google/gemma-4-26b-a4b-it": {
+      "providerId": "cloudflare-workers-ai",
+      "modelId": "@cf/google/gemma-4-26b-a4b-it",
+      "verificationStatus": "partially_verified",
+      "verificationDate": "2026-11-10",
+      "accountVerificationStatus": "verified",
+      "runtimeVerificationStatus": "partially_verified",
+      "accountEligibility": "zero_cost_eligible",
+      "eligibility": "eligible",
+      "operatorEnabled": true,
+      "contextTokens": 256000,
+      "maxInputTokens": null,
+      "maxOutputTokens": 8192,
+      "outputLimitEvidence": "operator_reported_documentation",
+      "applicationMaxOutputTokens": 2048,
+      "publishedPricing": {
+        "inputUsdPerMillionTokens": 0.1,
+        "outputUsdPerMillionTokens": 0.3,
+        "inputNeuronsPerMillionTokens": 9091,
+        "outputNeuronsPerMillionTokens": 27273
+      },
+      "documentedCapabilities": {
+        "apiParameters": {
+          "maxTokens": "documented",
+          "maxCompletionTokens": "documented",
+          "responseFormat": "documented"
+        },
+        "jsonMode": "provisional",
+        "jsonSchemaParameter": "documented",
+        "jsonSchemaModelSupport": "provisional",
+        "strictJsonSchemaParameter": "documented",
+        "strictJsonSchemaModelSupport": "documented",
+        "functionCalling": "documented",
+        "reasoning": "documented",
+        "vision": "documented",
+        "batch": "documented",
+        "zeroDataRetention": "documented"
+      },
+      "requiredStructuredOutput": "strict_json_schema",
+      "structuredOutput": "strict_json_schema",
+      "eligibilityReason": "Operator-approved for live assessment evaluation based on reported Workers Free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.",
+      "accountLimits": {
+        "requestsPerMinute": null,
+        "requestsPerDay": null,
+        "tokensPerMinute": null,
+        "tokensPerDay": null
+      }
+    }
+  }
+}

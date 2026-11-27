@@ -137,6 +137,8 @@ export function getEquivalentModelNames(
   )
 }
 
+// --- Constants (shared with backend projectIntakeClassifier) ---
+
 const DENY_SEGMENTS = new Set([
   '.git', '.svn', '.hg',
   'node_modules', 'bower_components', 'vendor',
@@ -168,16 +170,64 @@ const ALLOWED_EXTENSIONS = new Set([
 
 const CONFIG_FILENAMES = new Set(['tsconfig.json', 'jsconfig.json'])
 
+// --- Pure Functions ---
+
+function isDeniedSegment(segment: string): boolean {
+  const lower = segment.toLowerCase()
+  if (lower.startsWith('.env')) return true
+  return DENY_SEGMENTS.has(lower)
+}
+
+function isSecretFilename(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  if (SECRET_FILENAMES.has(lower)) return true
+  for (const ext of SECRET_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true
+  }
+  return false
+}
+
+function isAllowedExtension(ext: string): boolean {
+  return ALLOWED_EXTENSIONS.has(ext.toLowerCase())
+}
+
+function isConfigFile(filename: string): boolean {
+  return CONFIG_FILENAMES.has(filename.toLowerCase())
+}
+
 export function normalizePathClient(raw: string): string | null {
+  if (!raw || typeof raw !== 'string') return null
+
+  // Check for NUL and control characters
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f) return null
+  }
+
+  // Absolute paths (POSIX / or Windows \)
+  if (raw.startsWith('/') || raw.startsWith('\\')) return null
+
+  // UNC paths
+  if (raw.startsWith('//') || raw.startsWith('\\\\')) return null
+
+  // Drive letter prefix (e.g. C:, D:)
+  if (/^[a-zA-Z]:/.test(raw)) return null
+
+  // Traversal check
   const replaced = raw.replace(/\\/g, '/')
-  const segments = replaced.split('/').filter((s) => s.length > 0 && s !== '.')
-  if (segments.length === 0) return null
+  if (replaced.startsWith('../') || replaced === '..') return null
+  const segments = replaced.split('/')
   if (segments.some((s) => s === '..')) return null
-  if (segments.length > 16) return null
-  const normalized = segments.join('/')
+
+  // Filter empty segments and '.'
+  const filtered = segments.filter((s) => s.length > 0 && s !== '.')
+  if (filtered.length === 0) return null
+  if (filtered.length > 16) return null
+
+  const normalized = filtered.join('/')
   if (normalized.length > 240) return null
-  const hasControlChars = normalized.split('').some((ch) => ch.charCodeAt(0) <= 0x1f || ch.charCodeAt(0) === 0x7f)
-  if (hasControlChars || normalized.includes('\\')) return null
+  if (normalized.includes('\\')) return null
+
   return normalized
 }
 
@@ -187,13 +237,11 @@ export function classifyFileClient(relativePath: string): { status: 'accepted' |
   const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : ''
 
   for (const segment of segments) {
-    const lower = segment.toLowerCase()
-    if (lower.startsWith('.env')) return { status: 'ignored', reason: 'secret-or-dependency-path' }
-    if (DENY_SEGMENTS.has(lower)) return { status: 'ignored', reason: 'secret-or-dependency-path' }
+    if (isDeniedSegment(segment)) return { status: 'ignored', reason: 'secret-or-dependency-path' }
   }
 
   const lowerFilename = filename.toLowerCase()
-  if (SECRET_FILENAMES.has(lowerFilename)) return { status: 'ignored', reason: 'secret-file' }
+  if (isSecretFilename(lowerFilename)) return { status: 'ignored', reason: 'secret-file' }
   for (const secretExt of SECRET_EXTENSIONS) {
     if (lowerFilename.endsWith(secretExt)) return { status: 'ignored', reason: 'secret-file' }
   }
@@ -201,8 +249,8 @@ export function classifyFileClient(relativePath: string): { status: 'accepted' |
     if (lowerFilename.endsWith(deniedExt)) return { status: 'ignored', reason: 'unsupported-extension' }
   }
 
-  if (CONFIG_FILENAMES.has(filename.toLowerCase())) return { status: 'accepted', reason: null }
-  if (ALLOWED_EXTENSIONS.has(ext.toLowerCase())) return { status: 'accepted', reason: null }
+  if (isConfigFile(filename.toLowerCase())) return { status: 'accepted', reason: null }
+  if (isAllowedExtension(ext.toLowerCase())) return { status: 'accepted', reason: null }
 
   return { status: 'ignored', reason: 'unsupported-extension' }
 }

@@ -1,4 +1,10 @@
 import './env.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = join(fileURLToPath(import.meta.url), '..');
+const AI_MODELS_CONFIG_PATH = join(__dirname, '..', 'config', 'ai-models.json');
 
 export const PORT = parseInt(process.env['PORT'] ?? '3001', 10);
 
@@ -37,3 +43,96 @@ export const RATE_LIMITS = {
   /** Max requests per minute for /api/project-intake */
   projectIntake: parseInt(process.env['RATE_LIMIT_PROJECT_INTAKE'] ?? '2', 10),
 } as const;
+
+/**
+ * AI Models configuration loaded from JSON file.
+ * Set RAC_AI_MODELS_CONFIG_PATH to override the default location.
+ */
+export function loadAIModelsConfig(): AIModelsConfig {
+  const configPath = process.env['RAC_AI_MODELS_CONFIG_PATH'] ?? AI_MODELS_CONFIG_PATH;
+  try {
+    const content = readFileSync(configPath, 'utf-8');
+    return JSON.parse(content) as AIModelsConfig;
+  } catch (error) {
+    console.error(`Failed to load AI models config from ${configPath}:`, error);
+    throw error;
+  }
+}
+
+export interface AIModelsConfig {
+  version: number;
+  updated: string;
+  providers: Record<string, AIProviderConfig>;
+  models: Record<string, AIModelConfig>;
+}
+
+export interface AIProviderConfig {
+  id: string;
+  credentialEnv: string[];
+  endpoint: string;
+  endpointKind: string;
+  publishedLimits: Record<string, number | string | null>;
+  accountVerification: AIAccountVerification;
+}
+
+export interface AIAccountVerification {
+  status: string;
+  source: string;
+  plan: string;
+  [key: string]: unknown;
+}
+
+export interface AIModelConfig {
+  providerId: string;
+  modelId: string;
+  verificationStatus: string;
+  verificationDate: string;
+  accountVerificationStatus: string;
+  runtimeVerificationStatus: string;
+  accountEligibility: string;
+  eligibility: string;
+  operatorEnabled: boolean;
+  contextTokens: number;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  outputLimitEvidence: string;
+  applicationMaxOutputTokens: number;
+  publishedPricing: AIModelPricing;
+  documentedCapabilities: AIModelCapabilities;
+  requiredStructuredOutput: string;
+  structuredOutput: string;
+  eligibilityReason: string;
+  accountLimits: AIAccountLimits;
+}
+
+export interface AIModelPricing {
+  inputUsdPerMillionTokens: number | null;
+  outputUsdPerMillionTokens: number | null;
+  inputNeuronsPerMillionTokens: number | null;
+  outputNeuronsPerMillionTokens: number | null;
+}
+
+export interface AIModelCapabilities {
+  apiParameters: {
+    maxTokens: string;
+    maxCompletionTokens: string;
+    responseFormat: string;
+  };
+  jsonMode: string;
+  jsonSchemaParameter: string;
+  jsonSchemaModelSupport: string;
+  strictJsonSchemaParameter: string;
+  strictJsonSchemaModelSupport: string;
+  functionCalling: string;
+  reasoning: string;
+  vision: string;
+  batch: string;
+  zeroDataRetention: string;
+}
+
+export interface AIAccountLimits {
+  requestsPerMinute: number | null;
+  requestsPerDay: number | null;
+  tokensPerMinute: number | null;
+  tokensPerDay: number | null;
+}

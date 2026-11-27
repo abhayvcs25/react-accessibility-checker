@@ -480,61 +480,85 @@ export function isCandidateEligible(
   }
 
   const modelId = candidate.modelId;
-  const accountLimits = candidate.accountLimits;
   if (
     typeof modelId !== 'string' ||
-    !isCandidateModelId(modelId) ||
-    !isRecord(accountLimits) ||
-    !isKnownAccountLimit(accountLimits.requestsPerMinute) ||
-    !isKnownAccountLimit(accountLimits.requestsPerDay) ||
-    !isKnownAccountLimit(accountLimits.tokensPerMinute) ||
-    !isKnownAccountLimit(accountLimits.tokensPerDay) ||
-    typeof candidate.providerId !== 'string' ||
-    candidate.providerId !== MODEL_CANDIDATES[modelId].providerId ||
-    typeof candidate.verificationDate !== 'string' ||
-    candidate.verificationDate.length === 0 ||
-    typeof candidate.contextTokens !== 'number' ||
-    !Number.isFinite(candidate.contextTokens) ||
-    candidate.contextTokens <= 0 ||
-    !isRecord(candidate.documentedCapabilities) ||
-    !isRecord(candidate.documentedCapabilities.apiParameters) ||
-    candidate.documentedCapabilities.strictJsonSchemaParameter !==
-      'documented' ||
-    (candidate.documentedCapabilities.strictJsonSchemaModelSupport !==
-      'documented' &&
-      candidate.documentedCapabilities.strictJsonSchemaModelSupport !==
-        'provisional') ||
-    candidate.documentedCapabilities.apiParameters.responseFormat !==
-      'documented' ||
-    typeof candidate.eligibilityReason !== 'string' ||
-    candidate.eligibilityReason.length === 0
+    !isCandidateModelId(modelId)
   ) {
     return false;
   }
 
+  const config = MODEL_CANDIDATES[modelId];
+  if (!config) return false;
+
   if (
-    (candidate.verificationStatus !== 'verified' &&
-      candidate.verificationStatus !== 'partially_verified') ||
-    candidate.accountVerificationStatus !== 'verified' ||
-    (candidate.runtimeVerificationStatus !== 'verified' &&
-      candidate.runtimeVerificationStatus !== 'partially_verified') ||
-    candidate.accountEligibility !== 'zero_cost_eligible' ||
-    candidate.eligibility !== 'eligible' ||
-    candidate.operatorEnabled !== true ||
-    typeof candidate.maxOutputTokens !== 'number' ||
-    !Number.isFinite(candidate.maxOutputTokens) ||
-    candidate.maxOutputTokens <= 0 ||
-    (candidate.outputLimitEvidence !== 'provider_documented' &&
-      candidate.outputLimitEvidence !== 'operator_reported_documentation') ||
-    typeof candidate.applicationMaxOutputTokens !== 'number' ||
-    !Number.isFinite(candidate.applicationMaxOutputTokens) ||
-    candidate.applicationMaxOutputTokens <= 0 ||
-    candidate.applicationMaxOutputTokens > candidate.maxOutputTokens ||
-    candidate.requiredStructuredOutput !== 'strict_json_schema' ||
-    candidate.structuredOutput !== candidate.requiredStructuredOutput
+    candidate.verificationStatus !== 'verified' &&
+    candidate.verificationStatus !== 'partially_verified'
   ) {
     return false;
   }
+  if (candidate.accountVerificationStatus !== 'verified') {
+    return false;
+  }
+  if (
+    candidate.runtimeVerificationStatus !== 'verified' &&
+    candidate.runtimeVerificationStatus !== 'partially_verified'
+  ) {
+    return false;
+  }
+  if (candidate.accountEligibility !== 'zero_cost_eligible') {
+    return false;
+  }
+  if (candidate.eligibility !== 'eligible') {
+    return false;
+  }
+  if (candidate.operatorEnabled !== true) {
+    return false;
+  }
+  if (
+    typeof candidate.maxOutputTokens !== 'number' ||
+    !Number.isFinite(candidate.maxOutputTokens) ||
+    candidate.maxOutputTokens <= 0
+  ) {
+    return false;
+  }
+  if (
+    candidate.outputLimitEvidence !== 'provider_documented' &&
+    candidate.outputLimitEvidence !== 'operator_reported_documentation'
+  ) {
+    return false;
+  }
+  if (
+    typeof candidate.applicationMaxOutputTokens !== 'number' ||
+    !Number.isFinite(candidate.applicationMaxOutputTokens) ||
+    candidate.applicationMaxOutputTokens <= 0
+  ) {
+    return false;
+  }
+  if (
+    candidate.applicationMaxOutputTokens > candidate.maxOutputTokens
+  ) {
+    return false;
+  }
+  if (candidate.requiredStructuredOutput !== 'strict_json_schema') {
+    return false;
+  }
+  if (candidate.structuredOutput !== candidate.requiredStructuredOutput) {
+    return false;
+  }
+  if (
+    typeof candidate.contextTokens !== 'number' ||
+    !Number.isFinite(candidate.contextTokens) ||
+    candidate.contextTokens <= 0
+  ) {
+    return false;
+  }
+  if (!isRecord(candidate.documentedCapabilities)) {
+    return false;
+  }
+  if (candidate.documentedCapabilities.strictJsonSchemaModelSupport === 'unconfirmed') {
+    return false;
+  }
+
   return (
     candidate.providerId === 'groq' ||
     candidate.providerId === 'cloudflare-workers-ai'
@@ -666,12 +690,8 @@ export function getProviderCredentialReadiness(
   }
 
   const missing = [
-    ...(environment.CLOUDFLARE_ACCOUNT_ID?.trim()
-      ? []
-      : ['CLOUDFLARE_ACCOUNT_ID']),
-    ...(environment.CLOUDFLARE_API_TOKEN?.trim()
-      ? []
-      : ['CLOUDFLARE_API_TOKEN']),
+    ...(environment.CLOUDFLARE_ACCOUNT_ID?.trim() ? [] : ['CLOUDFLARE_ACCOUNT_ID']),
+    ...(environment.CLOUDFLARE_API_TOKEN?.trim() ? [] : ['CLOUDFLARE_API_TOKEN']),
   ];
   return {
     providerId,
