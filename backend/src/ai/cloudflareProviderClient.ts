@@ -17,6 +17,7 @@ import {
 const CLOUDFLARE_SUPPORTED_MODEL_IDS = [
   '@cf/zai-org/glm-4.7-flash',
   '@cf/google/gemma-4-26b-a4b-it',
+  '@cf/ibm-granite/granite-4.0-h-micro',
 ] as const satisfies readonly CandidateModelId[];
 
 interface CloudflareClientOptions {

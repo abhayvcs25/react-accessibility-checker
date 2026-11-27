@@ -175,7 +175,8 @@ describe('analyzeHtml context extraction integration', () => {
         jobs: [],
         assessmentGroups: [],
         findings: [],
-        fixingPrompt: null,
+        // Now generates prompt for IBM findings even when no AI findings
+        fixingPrompt: expect.stringContaining('IBM Equal Access Checker findings:'),
       },
     });
     expect(Object.keys(response).sort()).toEqual([
@@ -204,7 +205,7 @@ describe('analyzeHtml context extraction integration', () => {
         help: 'https://example.test/rule',
       },
     ]);
-    expect(response.advisoryReport.models).toHaveLength(5);
+    expect(response.advisoryReport.models).toHaveLength(6);
     expect(
       response.advisoryReport.models.every(
         (model) =>

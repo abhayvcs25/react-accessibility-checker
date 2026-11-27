@@ -120,7 +120,8 @@ describe('IBM analysis when contextual assessment fails', () => {
       expect(response.advisoryReport).toMatchObject({
         status: 'not_run',
         findings: [],
-        fixingPrompt: null,
+        // Now generates prompt for IBM findings even when contextual assessment fails
+        fixingPrompt: expect.stringContaining('IBM Equal Access Checker findings:'),
       });
       expect(logError).toHaveBeenCalledWith(
         'Contextual assessment failed; IBM accessibility results are unaffected.',

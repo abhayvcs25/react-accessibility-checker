@@ -204,10 +204,10 @@ describe('bounded AI assessment scheduler', () => {
     }]);
 
     expect(result.blockedModels).toHaveLength(0);
-    expect(result.jobs).toHaveLength(5);
-    expect(result.batches[0]?.plannedJobCount).toBe(5);
+    expect(result.jobs).toHaveLength(6);
+    expect(result.batches[0]?.plannedJobCount).toBe(6);
     expect(groq.complete).toHaveBeenCalledTimes(3);
-    expect(cloudflare.complete).toHaveBeenCalledTimes(2);
+    expect(cloudflare.complete).toHaveBeenCalledTimes(3);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
   });
 
@@ -234,6 +234,7 @@ describe('bounded AI assessment scheduler', () => {
       'qwen/qwen3.8-27b',
       '@cf/zai-org/glm-4.7-flash',
       '@cf/google/gemma-4-26b-a4b-it',
+      '@cf/ibm-granite/granite-4.0-h-micro',
     ];
     modelIds.forEach(enableModel);
     let activeTotal = 0;
@@ -299,7 +300,7 @@ describe('bounded AI assessment scheduler', () => {
     expect(new Set(firstStarted.slice(0, 2))).toEqual(
       new Set(['project1', 'project2']),
     );
-    expect(result.jobs).toHaveLength(30);
+    expect(result.jobs).toHaveLength(36);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
     expect(result.jobs.every((job) => job.result !== null)).toBe(true);
   }, 15_000);
@@ -441,6 +442,7 @@ describe('bounded AI assessment scheduler', () => {
     const modelIds = [
       '@cf/zai-org/glm-4.7-flash',
       '@cf/google/gemma-4-26b-a4b-it',
+      '@cf/ibm-granite/granite-4.0-h-micro',
     ] as const;
     for (const modelId of modelIds) {
       enableModel(modelId);
@@ -483,9 +485,9 @@ describe('bounded AI assessment scheduler', () => {
       },
     ]);
 
-    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs).toHaveLength(3);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
-    expect(requestTimes).toHaveLength(3);
+    expect(requestTimes).toHaveLength(4);
     for (let index = 1; index < requestTimes.length; index += 1) {
       expect(requestTimes[index]! - requestTimes[index - 1]!)
         .toBeGreaterThanOrEqual(5_000);

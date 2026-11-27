@@ -71,7 +71,8 @@ export type CandidateModelId =
   | 'openai/gpt-oss-20b'
   | 'qwen/qwen3.8-27b'
   | '@cf/zai-org/glm-4.7-flash'
-  | '@cf/google/gemma-4-26b-a4b-it';
+  | '@cf/google/gemma-4-26b-a4b-it'
+  | '@cf/ibm-granite/granite-4.0-h-micro';
 
 const eligibleModelIdBrand: unique symbol = Symbol('eligible-model-id');
 export type EligibleModelId = CandidateModelId & {
@@ -377,6 +378,41 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
       ...documentedCloudflareCapabilities,
       vision: 'documented',
       batch: 'documented',
+    },
+    requiredStructuredOutput: 'strict_json_schema',
+    structuredOutput: 'strict_json_schema',
+    eligibilityReason:
+      'Operator-approved for live assessment evaluation based on reported Workers Free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.',
+    accountLimits: blockedCloudflareLimits,
+  },
+  '@cf/ibm-granite/granite-4.0-h-micro': {
+    providerId: 'cloudflare-workers-ai',
+    modelId: '@cf/ibm-granite/granite-4.0-h-micro',
+    verificationStatus: 'partially_verified',
+    verificationDate: '2026-11-10',
+    accountVerificationStatus: 'verified',
+    runtimeVerificationStatus: 'partially_verified',
+    accountEligibility: 'zero_cost_eligible',
+    eligibility: 'eligible',
+    operatorEnabled: true,
+    contextTokens: 131_000,
+    maxInputTokens: null,
+    maxOutputTokens: 8_192,
+    outputLimitEvidence: 'operator_reported_documentation',
+    applicationMaxOutputTokens: 4_096,
+    publishedPricing: {
+      inputUsdPerMillionTokens: 0.017,
+      outputUsdPerMillionTokens: 0.112,
+      inputNeuronsPerMillionTokens: 4_545,
+      outputNeuronsPerMillionTokens: 13_636,
+    },
+    documentedCapabilities: {
+      ...documentedCloudflareCapabilities,
+      jsonMode: 'unconfirmed',
+      jsonSchemaModelSupport: 'documented',
+      strictJsonSchemaModelSupport: 'documented',
+      vision: 'unconfirmed',
+      batch: 'unconfirmed',
     },
     requiredStructuredOutput: 'strict_json_schema',
     structuredOutput: 'strict_json_schema',

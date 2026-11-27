@@ -122,7 +122,7 @@ describe('aggregateAdvisoryReport', () => {
     });
     expect(report.fixingPrompt).toContain('IBM-01');
     expect(report.fixingPrompt).toContain(
-      'Do not claim conformance from these results.',
+      'Do not claim WCAG conformance from these results alone.',
     );
     expect(issues).toEqual([
       {
@@ -545,6 +545,12 @@ describe('aggregateAdvisoryReport', () => {
       {
         providerId: 'cloudflare-workers-ai',
         modelId: '@cf/google/gemma-4-26b-a4b-it',
+        eligibility: 'eligible',
+        eligibilityReason: '',
+      },
+      {
+        providerId: 'cloudflare-workers-ai',
+        modelId: '@cf/ibm-granite/granite-4.0-h-micro',
         eligibility: 'eligible',
         eligibilityReason: '',
       },

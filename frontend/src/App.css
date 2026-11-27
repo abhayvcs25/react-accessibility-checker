@@ -520,6 +520,40 @@
   font-weight: 700;
 }
 
+.model-dropdown-wrapper {
+  margin: var(--design-space-4) 0 0;
+}
+
+.model-dropdown {
+  width: 100%;
+  max-width: 480px;
+  min-height: 44px;
+  padding: 0 var(--design-space-4);
+  border: var(--design-border-width) solid var(--design-color-border);
+  background: var(--design-color-surface);
+  color: var(--design-color-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--design-radius);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--design-space-3) center;
+  background-size: 16px;
+  padding-right: var(--design-space-8);
+}
+
+.model-dropdown:focus-visible {
+  outline: 3px solid var(--design-color-focus);
+  outline-offset: 4px;
+}
+
+.model-dropdown option {
+  padding: var(--design-space-2) var(--design-space-3);
+}
+
 .advisory-model-list,
 .advisory-finding-list,
 .advisory-assessment-list,

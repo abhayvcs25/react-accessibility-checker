@@ -23,6 +23,7 @@ const expectedGroqModels: CandidateModelId[] = [
 const expectedCloudflareModels: CandidateModelId[] = [
   '@cf/zai-org/glm-4.7-flash',
   '@cf/google/gemma-4-26b-a4b-it',
+  '@cf/ibm-granite/granite-4.0-h-micro',
 ];
 
 function makeVerifiedCandidate(
@@ -175,6 +176,38 @@ describe('shared model catalog', () => {
       },
       structuredOutput: 'strict_json_schema',
     });
+    expect(
+      MODEL_CANDIDATES['@cf/ibm-granite/granite-4.0-h-micro'],
+    ).toMatchObject({
+      contextTokens: 131_000,
+      maxInputTokens: null,
+      maxOutputTokens: 8_192,
+      outputLimitEvidence: 'operator_reported_documentation',
+      applicationMaxOutputTokens: 4_096,
+      accountVerificationStatus: 'verified',
+      accountEligibility: 'zero_cost_eligible',
+      publishedPricing: {
+        inputUsdPerMillionTokens: 0.017,
+        outputUsdPerMillionTokens: 0.112,
+        inputNeuronsPerMillionTokens: 4_545,
+        outputNeuronsPerMillionTokens: 13_636,
+      },
+      documentedCapabilities: {
+        apiParameters: {
+          maxTokens: 'documented',
+          maxCompletionTokens: 'documented',
+          responseFormat: 'documented',
+        },
+        jsonMode: 'unconfirmed',
+        jsonSchemaParameter: 'documented',
+        jsonSchemaModelSupport: 'documented',
+        strictJsonSchemaParameter: 'documented',
+        strictJsonSchemaModelSupport: 'documented',
+        functionCalling: 'documented',
+        zeroDataRetention: 'documented',
+      },
+      structuredOutput: 'strict_json_schema',
+    });
   });
 
   it('enables all candidates for operator-approved assessment evaluation without marking assessments verified', () => {
@@ -214,9 +247,13 @@ describe('shared model catalog', () => {
       );
     }
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
-      expect(MODEL_CANDIDATES[modelId].applicationMaxOutputTokens).toBe(2_048);
+      const expectedLimit =
+        modelId === '@cf/ibm-granite/granite-4.0-h-micro' ? 4_096 : 2_048;
+      expect(MODEL_CANDIDATES[modelId].applicationMaxOutputTokens).toBe(
+        expectedLimit,
+      );
     }
-    expect(getEligibleModels()).toHaveLength(5);
+    expect(getEligibleModels()).toHaveLength(6);
     expect(requireEligibleModel('openai/gpt-oss-120b')).toMatchObject({
       verificationStatus: 'partially_verified',
       runtimeVerificationStatus: 'partially_verified',
@@ -486,13 +523,13 @@ describe('server-side provider credentials', () => {
   });
 
   it('keeps catalog eligibility independent from credential presence', () => {
-    expect(getEligibleModels()).toHaveLength(5);
+    expect(getEligibleModels()).toHaveLength(6);
     expect(
       getProviderCredentialReadiness('groq', {
         GROQ_API_KEY: 'test-groq-secret-placeholder',
       }).configured,
     ).toBe(true);
-    expect(getEligibleModels()).toHaveLength(5);
+    expect(getEligibleModels()).toHaveLength(6);
   });
 
   it('reports missing Groq credentials without returning a secret value', () => {

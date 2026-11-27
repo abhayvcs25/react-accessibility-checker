@@ -255,26 +255,26 @@
         "tokensPerDay": null
       }
     },
-    "@cf/nvidia/nemotron-3-120b-a12b": {
+    "@cf/ibm-granite/granite-4.0-h-micro": {
       "providerId": "cloudflare-workers-ai",
-      "modelId": "@cf/nvidia/nemotron-3-120b-a12b",
+      "modelId": "@cf/ibm-granite/granite-4.0-h-micro",
       "verificationStatus": "partially_verified",
       "verificationDate": "2026-11-10",
       "accountVerificationStatus": "verified",
       "runtimeVerificationStatus": "partially_verified",
       "accountEligibility": "zero_cost_eligible",
       "eligibility": "eligible",
-      "operatorEnabled": false,
-      "contextTokens": 256000,
+      "operatorEnabled": true,
+      "contextTokens": 131000,
       "maxInputTokens": null,
-      "maxOutputTokens": 16384,
+      "maxOutputTokens": 8192,
       "outputLimitEvidence": "operator_reported_documentation",
-      "applicationMaxOutputTokens": 2048,
+      "applicationMaxOutputTokens": 4096,
       "publishedPricing": {
-        "inputUsdPerMillionTokens": 0.5,
-        "outputUsdPerMillionTokens": 1.5,
-        "inputNeuronsPerMillionTokens": 45455,
-        "outputNeuronsPerMillionTokens": 136364
+        "inputUsdPerMillionTokens": 0.017,
+        "outputUsdPerMillionTokens": 0.112,
+        "inputNeuronsPerMillionTokens": 4545,
+        "outputNeuronsPerMillionTokens": 13636
       },
       "documentedCapabilities": {
         "apiParameters": {
@@ -282,13 +282,13 @@
           "maxCompletionTokens": "documented",
           "responseFormat": "documented"
         },
-        "jsonMode": "provisional",
+        "jsonMode": "unconfirmed",
         "jsonSchemaParameter": "documented",
-        "jsonSchemaModelSupport": "provisional",
+        "jsonSchemaModelSupport": "documented",
         "strictJsonSchemaParameter": "documented",
-        "strictJsonSchemaModelSupport": "provisional",
+        "strictJsonSchemaModelSupport": "documented",
         "functionCalling": "documented",
-        "reasoning": "documented",
+        "reasoning": "unconfirmed",
         "vision": "unconfirmed",
         "batch": "unconfirmed",
         "zeroDataRetention": "documented"

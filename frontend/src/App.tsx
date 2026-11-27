@@ -1,4 +1,4 @@
-import { useRef, useState, Suspense, lazy } from 'react'
+import { useRef, useState, useEffect, Suspense, lazy } from 'react'
 import { ModeSelector } from './components/ModeSelector'
 import { FilePicker } from './components/FilePicker'
 import { FileDetails } from './components/FileDetails'
@@ -42,6 +42,16 @@ function App() {
     setAnalysisCancelled(false)
     setAnalysisError(null)
   }
+
+  // Clear previous reports when a new file is selected
+  useEffect(() => {
+    if (selection.status === 'selected') {
+      setReport(null)
+      setSourceReport(null)
+      setAnalysisError(null)
+      setAnalysisCancelled(false)
+    }
+  }, [selection.status])
 
   function handleModeSwitch(newMode: Mode) {
     if (newMode === mode) return

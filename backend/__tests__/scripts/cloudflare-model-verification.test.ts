@@ -58,15 +58,17 @@ describe('Cloudflare model verification probes', () => {
       sleep,
     });
 
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
     expect(results.every((result) => result.ok)).toBe(true);
     expect(requestModels).toEqual([
       '@cf/zai-org/glm-4.7-flash',
       '@cf/google/gemma-4-26b-a4b-it',
+      '@cf/ibm-granite/granite-4.0-h-micro',
     ]);
-    expect(requestTimes).toEqual([1_000, 6_000]);
-    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(requestTimes).toEqual([1_000, 6_000, 11_000]);
+    expect(sleep).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenNthCalledWith(1, 5_000);
+    expect(sleep).toHaveBeenNthCalledWith(2, 5_000);
   });
 
   it('requests strict JSON Schema and validates the greeting object', async () => {
@@ -110,7 +112,7 @@ describe('Cloudflare model verification probes', () => {
         },
       },
     });
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
     expect(results.every((result) =>
       result.ok &&
       result.validation === 'passed' &&

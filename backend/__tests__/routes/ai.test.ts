@@ -92,7 +92,7 @@ describe('AI status routes during provider migration', () => {
         liveTestAvailable: false,
         providerConnectivityChecked: false,
       });
-      expect(JSON.parse(body).models).toHaveLength(5);
+      expect(JSON.parse(body).models).toHaveLength(6);
       expect(
         JSON.parse(body).models.every(
           (model: {

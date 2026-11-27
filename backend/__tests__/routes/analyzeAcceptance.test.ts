@@ -35,6 +35,7 @@ const candidateModels = [
   ['groq', 'qwen/qwen3.8-27b'],
   ['cloudflare-workers-ai', '@cf/zai-org/glm-4.7-flash'],
   ['cloudflare-workers-ai', '@cf/google/gemma-4-26b-a4b-it'],
+  ['cloudflare-workers-ai', '@cf/ibm-granite/granite-4.0-h-micro'],
 ] as const;
 const buttonTargetId = 'target-button-1';
 const ruleId = 'BUTTON-PURPOSE-CLARITY';
@@ -235,7 +236,7 @@ describe('mocked file-to-report acceptance', () => {
     const report = await acceptedReport([]);
     expectIbmUnchanged(report);
     expect(report.advisoryReport.status).toBe('not_run');
-    expect(report.advisoryReport.models).toHaveLength(5);
+    expect(report.advisoryReport.models).toHaveLength(6);
     expect(
       report.advisoryReport.models.every(
         (model) =>
@@ -266,7 +267,7 @@ describe('mocked file-to-report acceptance', () => {
     );
     expectIbmUnchanged(report);
     expect(report.advisoryReport.status).toBe('completed');
-    expect(report.advisoryReport.models).toHaveLength(5);
+    expect(report.advisoryReport.models).toHaveLength(6);
     expect(report.advisoryReport.models).toEqual(
       expect.arrayContaining(
         candidateModels.map(([, modelId]) =>
@@ -280,7 +281,7 @@ describe('mocked file-to-report acceptance', () => {
       ),
     );
     expect(report.advisoryReport.assessmentGroups).toHaveLength(1);
-    expect(report.advisoryReport.assessmentGroups[0]?.assessments).toHaveLength(5);
+    expect(report.advisoryReport.assessmentGroups[0]?.assessments).toHaveLength(6);
     expect(report.advisoryReport.findings).toHaveLength(1);
     expect(report.advisoryReport.fixingPrompt).toContain(
       'Only the external coding assistant may edit source files',
@@ -332,7 +333,10 @@ describe('mocked file-to-report acceptance', () => {
     );
     expect(report.advisoryReport.assessmentGroups).toHaveLength(0);
     expect(report.advisoryReport.findings).toHaveLength(0);
-    expect(report.advisoryReport.fixingPrompt).toBeNull();
+    // Now generates prompt for IBM findings even when no AI findings
+    expect(report.advisoryReport.fixingPrompt).toContain('IBM Equal Access Checker findings:');
+    expect(report.advisoryReport.fixingPrompt).toContain('WCAG20_Img_HasAlt');
+    expect(report.advisoryReport.fixingPrompt).toContain('Image has no alternative text');
   });
 
   it('preserves disagreement and per-model provenance', async () => {
