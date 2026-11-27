@@ -204,7 +204,7 @@ describe('analyzeHtml context extraction integration', () => {
         help: 'https://example.test/rule',
       },
     ]);
-    expect(response.advisoryReport.models).toHaveLength(6);
+    expect(response.advisoryReport.models).toHaveLength(5);
     expect(
       response.advisoryReport.models.every(
         (model) =>

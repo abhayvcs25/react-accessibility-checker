@@ -12,6 +12,7 @@ import {
   runContextualAssessmentJobs,
 } from './contextualAssessmentScheduler.js'
 import { aggregateAdvisoryReport } from './reportAggregation.js'
+import { createHash } from 'node:crypto'
 
 const REQUIRED_POLICY = 'IBM_Accessibility'
 const REQUIRED_REPORT_LEVELS = [
@@ -21,6 +22,34 @@ const REQUIRED_REPORT_LEVELS = [
   'potentialrecommendation',
   'manual',
 ] as const
+
+// Simple in-memory LRU cache for analysis results
+const ANALYSIS_CACHE_MAX_SIZE = 50
+const analysisCache = new Map<string, { value: AnalyzeResponse; timestamp: number }>()
+
+function getCacheKey(html: string, filename: string): string {
+  return createHash('sha256').update(`${filename}\0${html}`).digest('hex').slice(0, 32)
+}
+
+function getFromCache(key: string): AnalyzeResponse | null {
+  const entry = analysisCache.get(key)
+  if (!entry) return null
+  // Evict entries older than 1 hour
+  if (Date.now() - entry.timestamp > 60 * 60 * 1000) {
+    analysisCache.delete(key)
+    return null
+  }
+  return entry.value
+}
+
+function setCache(key: string, value: AnalyzeResponse): void {
+  if (analysisCache.size >= ANALYSIS_CACHE_MAX_SIZE) {
+    // Remove oldest entry (first key)
+    const firstKey = analysisCache.keys().next().value
+    if (firstKey) analysisCache.delete(firstKey)
+  }
+  analysisCache.set(key, { value, timestamp: Date.now() })
+}
 
 function logAnalysis(event: string, details: Record<string, unknown>): void {
   if (process.env.RAC_LOG_ANALYSIS === '1') {
@@ -150,6 +179,18 @@ export function analyzeHtml(
     )
   }
 
+  // Check cache first (disabled in test environment)
+  const isTestEnv = process.env.NODE_ENV === 'test' || process.env.RAC_DISABLE_CACHE === '1'
+  const cacheKey = getCacheKey(html, filename)
+  
+  if (!isTestEnv) {
+    const cached = getFromCache(cacheKey)
+    if (cached) {
+      logAnalysis('cache hit', { filename, cacheKey })
+      return Promise.resolve(cached)
+    }
+  }
+
   return enqueue(async () => {
     const analysisStartedAt = performance.now()
     await ensureConfiguration()
@@ -253,7 +294,7 @@ export function analyzeHtml(
       aiSchedulerFailed,
     })
 
-    return {
+    const response = {
       filename,
       analyzedAt: new Date().toISOString(),
       summary: {
@@ -273,6 +314,8 @@ export function analyzeHtml(
       contextualAssessments,
       advisoryReport,
     }
+    setCache(cacheKey, response)
+    return response
   })
 }
 

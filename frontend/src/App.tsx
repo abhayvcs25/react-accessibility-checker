@@ -1,12 +1,15 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, Suspense, lazy } from 'react'
 import { ModeSelector } from './components/ModeSelector'
 import { FilePicker } from './components/FilePicker'
-import { ProjectFolderPicker } from './components/ProjectFolderPicker'
-import { ProjectManifest } from './components/ProjectManifest'
 import { FileDetails } from './components/FileDetails'
 import { AnalysisActions } from './components/AnalysisActions'
-import { AnalysisReport } from './components/AnalysisReport'
-import { SourceReport } from './components/SourceReport'
+
+// Lazy-load heavy components to reduce initial bundle size
+const AnalysisReport = lazy(() => import('./components/AnalysisReport').then(m => ({ default: m.AnalysisReport })))
+const SourceReport = lazy(() => import('./components/SourceReport').then(m => ({ default: m.SourceReport })))
+const ProjectManifest = lazy(() => import('./components/ProjectManifest').then(m => ({ default: m.ProjectManifest })))
+const ProjectFolderPicker = lazy(() => import('./components/ProjectFolderPicker').then(m => ({ default: m.ProjectFolderPicker })))
+
 import { type AnalyzeResponse, type SourceAnalyzeResponse, type SelectionState, type Mode, type ProjectIntakeResponse, EMPTY_STATE } from './types'
 import './App.css'
 
@@ -334,22 +337,26 @@ function App() {
               </div>
             </div>
 
-            <ProjectFolderPicker
-              projectManifest={projectManifest}
-              setProjectManifest={setProjectManifest}
-              selectedProjectFiles={selectedProjectFiles}
-              setSelectedProjectFiles={setSelectedProjectFiles}
-              projectLabel={projectLabel}
-              setProjectLabel={setProjectLabel}
-              setAnalysisCancelled={setAnalysisCancelled}
-              setAnalysisError={setAnalysisError}
-              analysisController={analysisController}
-              readId={readId}
-              onProjectIntake={handleProjectIntake}
-            />
+            <Suspense fallback={<div className="loading-placeholder">Loading project picker…</div>}>
+              <ProjectFolderPicker
+                projectManifest={projectManifest}
+                setProjectManifest={setProjectManifest}
+                selectedProjectFiles={selectedProjectFiles}
+                setSelectedProjectFiles={setSelectedProjectFiles}
+                projectLabel={projectLabel}
+                setProjectLabel={setProjectLabel}
+                setAnalysisCancelled={setAnalysisCancelled}
+                setAnalysisError={setAnalysisError}
+                analysisController={analysisController}
+                readId={readId}
+                onProjectIntake={handleProjectIntake}
+              />
+            </Suspense>
 
             {projectManifest && projectManifest.files.length > 0 && (
-              <ProjectManifest manifest={projectManifest} />
+              <Suspense fallback={<div className="loading-placeholder">Loading manifest…</div>}>
+                <ProjectManifest manifest={projectManifest} />
+              </Suspense>
             )}
 
             <p className="analysis-note">
@@ -427,14 +434,18 @@ function App() {
         )}
 
         {report && (
-          <AnalysisReport
-            report={report}
-            advisoryReport={report.advisoryReport}
-          />
+          <Suspense fallback={<div className="loading-placeholder">Loading analysis report…</div>}>
+            <AnalysisReport
+              report={report}
+              advisoryReport={report.advisoryReport}
+            />
+          </Suspense>
         )}
 
         {sourceReport && (
-          <SourceReport sourceReport={sourceReport} />
+          <Suspense fallback={<div className="loading-placeholder">Loading source report…</div>}>
+            <SourceReport sourceReport={sourceReport} />
+          </Suspense>
         )}
 
         <p className="visually-hidden" role="status" aria-live="polite">

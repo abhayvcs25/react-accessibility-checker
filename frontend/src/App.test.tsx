@@ -145,7 +145,8 @@ describe('App Component - Project Folder Selection', () => {
     const projectTab = screen.getByRole('tab', { name: 'React Project (folder)' });
     fireEvent.click(projectTab);
 
-    expect(screen.getByText('Choose a React project folder')).toBeInTheDocument();
+    // Wait for lazy-loaded ProjectFolderPicker to render
+    await screen.findByText('Choose a React project folder');
     expect(screen.getByLabelText('React project folder')).toBeInTheDocument();
   });
 });

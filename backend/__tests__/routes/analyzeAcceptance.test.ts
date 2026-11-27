@@ -34,7 +34,6 @@ const candidateModels = [
   ['groq', 'openai/gpt-oss-20b'],
   ['groq', 'qwen/qwen3.8-27b'],
   ['cloudflare-workers-ai', '@cf/zai-org/glm-4.7-flash'],
-  ['cloudflare-workers-ai', '@cf/nvidia/nemotron-3-120b-a12b'],
   ['cloudflare-workers-ai', '@cf/google/gemma-4-26b-a4b-it'],
 ] as const;
 const buttonTargetId = 'target-button-1';
@@ -236,7 +235,7 @@ describe('mocked file-to-report acceptance', () => {
     const report = await acceptedReport([]);
     expectIbmUnchanged(report);
     expect(report.advisoryReport.status).toBe('not_run');
-    expect(report.advisoryReport.models).toHaveLength(6);
+    expect(report.advisoryReport.models).toHaveLength(5);
     expect(
       report.advisoryReport.models.every(
         (model) =>
@@ -267,7 +266,7 @@ describe('mocked file-to-report acceptance', () => {
     );
     expectIbmUnchanged(report);
     expect(report.advisoryReport.status).toBe('completed');
-    expect(report.advisoryReport.models).toHaveLength(6);
+    expect(report.advisoryReport.models).toHaveLength(5);
     expect(report.advisoryReport.models).toEqual(
       expect.arrayContaining(
         candidateModels.map(([, modelId]) =>
@@ -281,7 +280,7 @@ describe('mocked file-to-report acceptance', () => {
       ),
     );
     expect(report.advisoryReport.assessmentGroups).toHaveLength(1);
-    expect(report.advisoryReport.assessmentGroups[0]?.assessments).toHaveLength(6);
+    expect(report.advisoryReport.assessmentGroups[0]?.assessments).toHaveLength(5);
     expect(report.advisoryReport.findings).toHaveLength(1);
     expect(report.advisoryReport.fixingPrompt).toContain(
       'Only the external coding assistant may edit source files',

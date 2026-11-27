@@ -16,10 +16,8 @@ import {
 
 const CLOUDFLARE_SUPPORTED_MODEL_IDS = [
   '@cf/zai-org/glm-4.7-flash',
-  '@cf/nvidia/nemotron-3-120b-a12b',
   '@cf/google/gemma-4-26b-a4b-it',
 ] as const satisfies readonly CandidateModelId[];
-const NEMOTRON_DEPRECATION_DATE = Date.UTC(2026, 10, 20);
 
 interface CloudflareClientOptions {
   fetcher?: typeof fetch;
@@ -400,16 +398,6 @@ export function createCloudflareProviderAdapter(
         throw requestError(
           'invalid_request',
           'This Cloudflare model is not enabled in the provider adapter.',
-        );
-      }
-      if (
-        modelId === '@cf/nvidia/nemotron-3-120b-a12b' &&
-        Date.now() >= NEMOTRON_DEPRECATION_DATE
-      ) {
-        throw requestError(
-          'model_deprecated',
-          'Cloudflare scheduled this Nemotron model for deprecation on 2026-11-20.',
-          { statusCode: 410, providerCode: '5028' },
         );
       }
       const candidate = MODEL_CANDIDATES[modelId];

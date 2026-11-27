@@ -71,7 +71,6 @@ export type CandidateModelId =
   | 'openai/gpt-oss-20b'
   | 'qwen/qwen3.8-27b'
   | '@cf/zai-org/glm-4.7-flash'
-  | '@cf/nvidia/nemotron-3-120b-a12b'
   | '@cf/google/gemma-4-26b-a4b-it';
 
 const eligibleModelIdBrand: unique symbol = Symbol('eligible-model-id');
@@ -341,38 +340,6 @@ export const MODEL_CANDIDATES: Record<CandidateModelId, ModelCandidate> = {
       outputUsdPerMillionTokens: 0.4,
       inputNeuronsPerMillionTokens: 5_500,
       outputNeuronsPerMillionTokens: 36_400,
-    },
-    documentedCapabilities: {
-      ...documentedCloudflareCapabilities,
-      vision: 'unconfirmed',
-      batch: 'unconfirmed',
-    },
-    requiredStructuredOutput: 'strict_json_schema',
-    structuredOutput: 'strict_json_schema',
-    eligibilityReason:
-      'Operator-approved for live assessment evaluation based on reported Workers Free/no-paid-path account status and a successful strict-schema extraction; accessibility assessment accuracy remains unverified.',
-    accountLimits: blockedCloudflareLimits,
-  },
-  '@cf/nvidia/nemotron-3-120b-a12b': {
-    providerId: 'cloudflare-workers-ai',
-    modelId: '@cf/nvidia/nemotron-3-120b-a12b',
-    verificationStatus: 'partially_verified',
-    verificationDate: '2026-11-10',
-    accountVerificationStatus: 'verified',
-    runtimeVerificationStatus: 'partially_verified',
-    accountEligibility: 'zero_cost_eligible',
-    eligibility: 'eligible',
-    operatorEnabled: true,
-    contextTokens: 256_000,
-    maxInputTokens: null,
-    maxOutputTokens: 16_384,
-    outputLimitEvidence: 'operator_reported_documentation',
-    applicationMaxOutputTokens: 2_048,
-    publishedPricing: {
-      inputUsdPerMillionTokens: 0.5,
-      outputUsdPerMillionTokens: 1.5,
-      inputNeuronsPerMillionTokens: 45_455,
-      outputNeuronsPerMillionTokens: 136_364,
     },
     documentedCapabilities: {
       ...documentedCloudflareCapabilities,

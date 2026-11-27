@@ -16,7 +16,6 @@ const apiToken = 'test-cloudflare-secret';
 const accountId = 'test-account-id';
 const modelIds = [
   '@cf/zai-org/glm-4.7-flash',
-  '@cf/nvidia/nemotron-3-120b-a12b',
   '@cf/google/gemma-4-26b-a4b-it',
 ] as const satisfies readonly CandidateModelId[];
 const schema = {
@@ -246,25 +245,6 @@ describe('Cloudflare Workers AI provider adapter', () => {
     await expect(adapter.complete(request)).rejects.toMatchObject({
       metadata: { kind: 'invalid_request' },
       message: 'This Cloudflare model is not enabled in the provider adapter.',
-    });
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it('refuses Nemotron requests on or after the documented deprecation date', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-20T00:00:00.000Z'));
-    const fetcher = createFetch(jsonResponse(completion()));
-
-    await expect(
-      createAdapter(fetcher).complete(makeRequest(modelIds[1])),
-    ).rejects.toMatchObject({
-      message:
-        'Cloudflare scheduled this Nemotron model for deprecation on 2026-11-20.',
-      metadata: {
-        kind: 'model_deprecated',
-        statusCode: 410,
-        providerCode: '5028',
-      },
     });
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -636,7 +616,7 @@ describe('Cloudflare Workers AI provider adapter', () => {
 
   it('uses only the injected transport and cannot reach an external network', async () => {
     const fetcher = createFetch(jsonResponse(completion()));
-    await createAdapter(fetcher).complete(makeRequest(modelIds[2]));
+    await createAdapter(fetcher).complete(makeRequest(modelIds[1]));
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
       AI_PROVIDERS['cloudflare-workers-ai'].endpoint.replace(

@@ -204,10 +204,10 @@ describe('bounded AI assessment scheduler', () => {
     }]);
 
     expect(result.blockedModels).toHaveLength(0);
-    expect(result.jobs).toHaveLength(6);
-    expect(result.batches[0]?.plannedJobCount).toBe(6);
+    expect(result.jobs).toHaveLength(5);
+    expect(result.batches[0]?.plannedJobCount).toBe(5);
     expect(groq.complete).toHaveBeenCalledTimes(3);
-    expect(cloudflare.complete).toHaveBeenCalledTimes(3);
+    expect(cloudflare.complete).toHaveBeenCalledTimes(2);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
   });
 
@@ -233,7 +233,6 @@ describe('bounded AI assessment scheduler', () => {
       'openai/gpt-oss-20b',
       'qwen/qwen3.8-27b',
       '@cf/zai-org/glm-4.7-flash',
-      '@cf/nvidia/nemotron-3-120b-a12b',
       '@cf/google/gemma-4-26b-a4b-it',
     ];
     modelIds.forEach(enableModel);
@@ -300,7 +299,7 @@ describe('bounded AI assessment scheduler', () => {
     expect(new Set(firstStarted.slice(0, 2))).toEqual(
       new Set(['project1', 'project2']),
     );
-    expect(result.jobs).toHaveLength(36);
+    expect(result.jobs).toHaveLength(30);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
     expect(result.jobs.every((job) => job.result !== null)).toBe(true);
   }, 15_000);
@@ -441,7 +440,6 @@ describe('bounded AI assessment scheduler', () => {
   it('spaces Cloudflare model requests by at least five seconds', async () => {
     const modelIds = [
       '@cf/zai-org/glm-4.7-flash',
-      '@cf/nvidia/nemotron-3-120b-a12b',
       '@cf/google/gemma-4-26b-a4b-it',
     ] as const;
     for (const modelId of modelIds) {
@@ -485,9 +483,9 @@ describe('bounded AI assessment scheduler', () => {
       },
     ]);
 
-    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs).toHaveLength(2);
     expect(result.jobs.every((job) => job.status === 'succeeded')).toBe(true);
-    expect(requestTimes).toHaveLength(4);
+    expect(requestTimes).toHaveLength(3);
     for (let index = 1; index < requestTimes.length; index += 1) {
       expect(requestTimes[index]! - requestTimes[index - 1]!)
         .toBeGreaterThanOrEqual(5_000);

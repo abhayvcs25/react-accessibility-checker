@@ -264,7 +264,7 @@
       "runtimeVerificationStatus": "partially_verified",
       "accountEligibility": "zero_cost_eligible",
       "eligibility": "eligible",
-      "operatorEnabled": true,
+      "operatorEnabled": false,
       "contextTokens": 256000,
       "maxInputTokens": null,
       "maxOutputTokens": 16384,

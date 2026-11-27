@@ -7,7 +7,6 @@ import {
 
 const MODEL_IDS = [
   '@cf/zai-org/glm-4.7-flash',
-  '@cf/nvidia/nemotron-3-120b-a12b',
   '@cf/google/gemma-4-26b-a4b-it',
 ] as const satisfies readonly CandidateModelId[];
 const MIN_REQUEST_INTERVAL_MS = 5_000;
@@ -304,21 +303,6 @@ export async function runCloudflareModelVerification(
   let previousRequestStartedAt: number | undefined;
 
   for (const modelId of models) {
-    if (
-      modelId === '@cf/nvidia/nemotron-3-120b-a12b' &&
-      now() >= Date.UTC(2026, 10, 20)
-    ) {
-      results.push({
-        modelId,
-        ok: false,
-        attempts: 0,
-        httpStatus: null,
-        requestId: null,
-        attemptHistory: [],
-        errorCode: 'model_deprecated',
-      });
-      continue;
-    }
     const attemptHistory: CloudflareProbeResult['attemptHistory'] = [];
     let modelResult: CloudflareProbeResult | undefined;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {

@@ -22,7 +22,6 @@ const expectedGroqModels: CandidateModelId[] = [
 
 const expectedCloudflareModels: CandidateModelId[] = [
   '@cf/zai-org/glm-4.7-flash',
-  '@cf/nvidia/nemotron-3-120b-a12b',
   '@cf/google/gemma-4-26b-a4b-it',
 ];
 
@@ -155,28 +154,6 @@ describe('shared model catalog', () => {
       structuredOutput: 'strict_json_schema',
     });
     expect(
-      MODEL_CANDIDATES['@cf/nvidia/nemotron-3-120b-a12b'],
-    ).toMatchObject({
-      contextTokens: 256_000,
-      maxInputTokens: null,
-      maxOutputTokens: 16_384,
-      outputLimitEvidence: 'operator_reported_documentation',
-      applicationMaxOutputTokens: 2_048,
-      accountVerificationStatus: 'verified',
-      accountEligibility: 'zero_cost_eligible',
-      publishedPricing: {
-        inputUsdPerMillionTokens: 0.5,
-        outputUsdPerMillionTokens: 1.5,
-        inputNeuronsPerMillionTokens: 45_455,
-        outputNeuronsPerMillionTokens: 136_364,
-      },
-      documentedCapabilities: {
-        vision: 'unconfirmed',
-        batch: 'unconfirmed',
-      },
-      structuredOutput: 'strict_json_schema',
-    });
-    expect(
       MODEL_CANDIDATES['@cf/google/gemma-4-26b-a4b-it'],
     ).toMatchObject({
       contextTokens: 256_000,
@@ -239,7 +216,7 @@ describe('shared model catalog', () => {
     for (const modelId of Object.keys(MODEL_CANDIDATES) as CandidateModelId[]) {
       expect(MODEL_CANDIDATES[modelId].applicationMaxOutputTokens).toBe(2_048);
     }
-    expect(getEligibleModels()).toHaveLength(6);
+    expect(getEligibleModels()).toHaveLength(5);
     expect(requireEligibleModel('openai/gpt-oss-120b')).toMatchObject({
       verificationStatus: 'partially_verified',
       runtimeVerificationStatus: 'partially_verified',
@@ -509,13 +486,13 @@ describe('server-side provider credentials', () => {
   });
 
   it('keeps catalog eligibility independent from credential presence', () => {
-    expect(getEligibleModels()).toHaveLength(6);
+    expect(getEligibleModels()).toHaveLength(5);
     expect(
       getProviderCredentialReadiness('groq', {
         GROQ_API_KEY: 'test-groq-secret-placeholder',
       }).configured,
     ).toBe(true);
-    expect(getEligibleModels()).toHaveLength(6);
+    expect(getEligibleModels()).toHaveLength(5);
   });
 
   it('reports missing Groq credentials without returning a secret value', () => {

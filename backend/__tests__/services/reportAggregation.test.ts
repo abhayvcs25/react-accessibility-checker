@@ -544,12 +544,6 @@ describe('aggregateAdvisoryReport', () => {
       },
       {
         providerId: 'cloudflare-workers-ai',
-        modelId: '@cf/nvidia/nemotron-3-120b-a12b',
-        eligibility: 'eligible',
-        eligibilityReason: '',
-      },
-      {
-        providerId: 'cloudflare-workers-ai',
         modelId: '@cf/google/gemma-4-26b-a4b-it',
         eligibility: 'eligible',
         eligibilityReason: '',
